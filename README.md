@@ -36,7 +36,6 @@ No Razorpay account needed. Carbon generates the payloads and signs them with `X
 | payment-decline-spike | 2,000 orders, ~1,400 captured (70% success) | All passed | ~480 ms | &lt; 5,000 ms ✓ |
 | refund-storm | 2,000 orders, 2,000 captured, 500 refunds | All passed | ~520 ms | &lt; 5,000 ms ✓ |
 
-See [TECHNICAL_REQUIREMENTS.md](./TECHNICAL_REQUIREMENTS.md) for full spec. Carbon Layer is not limited to payments; payments is the first vertical; more apps/verticals will be imitated later (see Product strategy, scope, and paid layers in the spec).
 
 **Tests:**
 ```bash
