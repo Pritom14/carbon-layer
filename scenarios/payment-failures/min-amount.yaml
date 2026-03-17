@@ -1,0 +1,37 @@
+# Edge case: minimum amount (100 paise = 1 INR).
+
+name: min-amount
+description: >
+  Same flow with minimum amount (100 paise = 1 INR). Edge case for rounding and gateway limits.
+
+category: edge_case
+
+parameters:
+  amount_paise:
+    default: 100
+    description: Minimum order amount in paise
+
+phases:
+  - name: baseline
+    description: Create one order at minimum amount, pay and capture
+    actions:
+      - create_orders:
+          count: 1
+          amount_paise: 100
+      - create_payments:
+          for_each: orders
+          success_rate: 1.0
+      - capture_payments:
+          for_each: successful_payments
+
+validations:
+  - check: orders_count
+    description: One order created
+    expected: ">= 1"
+    severity: high
+  - check: payments_captured_count
+    description: Payment captured at min amount
+    expected: ">= 1"
+    severity: high
+
+findings: []

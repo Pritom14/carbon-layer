@@ -1,0 +1,63 @@
+# Real-world scale: 2k orders, 500 refunds (25% of captured).
+
+name: refund-storm
+description: >
+  Simulates a sudden spike in refunds (25% of captured payments).
+  Real-world scale: 2000 orders, 500 refunds. Verifies bulk refund and reconciliation.
+
+category: refund_chaos
+
+parameters:
+  baseline_orders:
+    default: 2000
+    description: Number of orders to create
+  refund_rate:
+    default: 0.25
+    description: Fraction of captured payments to refund (e.g. 0.25 = 25%)
+  avg_order_value_paise:
+    default: 250000
+    description: Average order value in paise
+
+phases:
+  - name: baseline
+    description: Create orders, payments, capture
+    actions:
+      - create_orders:
+          count: 2000
+          amount_paise: 250000
+      - create_payments:
+          for_each: orders
+          success_rate: 1.0
+      - capture_payments:
+          for_each: successful_payments
+
+  - name: attack
+    description: Trigger refund storm on a subset of captured payments
+    depends_on: baseline
+    actions:
+      - create_refunds:
+          count: 500
+          "on": captured_payments
+          sample: random
+
+validations:
+  - check: orders_count
+    description: Baseline orders created
+    expected: ">= 2000"
+    severity: high
+  - check: payments_captured_count
+    description: All orders captured
+    expected: ">= 2000"
+    severity: high
+  - check: refunds_count
+    description: Refund storm size
+    expected: ">= 500"
+    severity: high
+
+findings:
+  - condition: "refunds_count < 100"
+    message: "Refund count lower than expected; check refund phase and captured_payments."
+    severity: medium
+  - condition: "payments_captured_count < 500"
+    message: "Low capture count; baseline may be too small for refund scenario."
+    severity: low

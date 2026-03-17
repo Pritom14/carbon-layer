@@ -1,0 +1,63 @@
+# Real-world scale: 1k orders, 15% dispute spike (~150 disputes).
+
+name: dispute-spike
+description: >
+  Simulates a sudden spike in payment disputes (15% vs normal 1-2%).
+  Real-world scale: 1000 orders, 150 disputes. Use mock adapter to run without Razorpay.
+
+category: dispute
+
+parameters:
+  baseline_orders:
+    default: 1000
+    description: Number of normal orders to create as baseline
+  dispute_rate:
+    default: 0.15
+    description: Fraction of payments that receive disputes (e.g. 0.15 = 15%)
+  avg_order_value_paise:
+    default: 250000
+    description: Average order value in paise (2500 INR)
+
+phases:
+  - name: baseline
+    description: Create orders, payments, capture
+    actions:
+      - create_orders:
+          count: 1000
+          amount_paise: 250000
+      - create_payments:
+          for_each: orders
+          success_rate: 1.0
+      - capture_payments:
+          for_each: successful_payments
+
+  - name: attack
+    description: Trigger dispute spike
+    depends_on: baseline
+    actions:
+      - create_disputes:
+          count: 150
+          "on": captured_payments
+          sample: random
+
+validations:
+  - check: orders_count
+    description: Baseline orders created
+    expected: ">= 1000"
+    severity: high
+  - check: payments_captured_count
+    description: All orders should have captured payment
+    expected: ">= 1000"
+    severity: high
+  - check: disputes_count
+    description: Dispute spike size
+    expected: ">= 150"
+    severity: high
+
+findings:
+  - condition: "orders_count < 100"
+    message: "Very few orders created; baseline may not be representative."
+    severity: medium
+  - condition: "disputes_count < 10"
+    message: "Dispute count lower than expected; check dispute phase."
+    severity: medium

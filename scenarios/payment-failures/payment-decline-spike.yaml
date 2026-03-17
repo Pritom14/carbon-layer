@@ -1,0 +1,54 @@
+# Real-world scale: 2k orders, 70% success rate (~1.4k captured).
+
+name: payment-decline-spike
+description: >
+  Simulates a spike in payment failures (30% decline rate vs normal).
+  Real-world scale: 2000 orders, ~1400 captured. Verifies retry and order-state handling.
+
+category: payment_failures
+
+parameters:
+  baseline_orders:
+    default: 2000
+    description: Number of orders to create
+  success_rate:
+    default: 0.7
+    description: Fraction of payments that succeed (0.7 = 70% success, 30% fail)
+  avg_order_value_paise:
+    default: 250000
+    description: Average order value in paise (2500 INR)
+
+phases:
+  - name: baseline
+    description: Create orders, payments (with failure rate), capture successful only
+    actions:
+      - create_orders:
+          count: 2000
+          amount_paise: 250000
+      - create_payments:
+          for_each: orders
+          success_rate: 0.7
+      - capture_payments:
+          for_each: successful_payments
+
+validations:
+  - check: orders_count
+    description: Orders created
+    expected: ">= 2000"
+    severity: high
+  - check: payments_captured_count
+    description: Successful captures (70% of attempts)
+    expected: ">= 1200"
+    severity: high
+  - check: payment_success_rate
+    description: Success rate should be around 0.7
+    expected: ">= 0.65"
+    severity: high
+
+findings:
+  - condition: "payment_success_rate < 0.5"
+    message: "Payment success rate below 50%; higher decline rate than configured."
+    severity: medium
+  - condition: "payments_captured_count < 1000"
+    message: "Fewer than 1000 payments captured; verify success_rate and volume."
+    severity: medium
