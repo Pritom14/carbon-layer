@@ -1,0 +1,35 @@
+# Minimal payment lifecycle for MVP (provider-agnostic)
+# Entities and allowed transitions; used by compiler for validation.
+
+entities:
+  - id: order
+    states: [created, attempted, paid]
+  - id: payment
+    states: [created, authorized, captured, failed, refunded]
+  - id: dispute
+    states: [open, under_review, resolved]
+  - id: refund
+    states: [pending, processed, failed]
+
+transitions:
+  - from: order.created
+    to: order.attempted
+    on: payment_attempted
+  - from: order.attempted
+    to: order.paid
+    on: payment_captured
+  - from: payment.created
+    to: payment.authorized
+    on: authorize
+  - from: payment.authorized
+    to: payment.captured
+    on: capture
+  - from: payment.authorized
+    to: payment.failed
+    on: expire
+  - from: payment.captured
+    to: payment.refunded
+    on: refund_full
+  - from: payment.captured
+    to: dispute.open
+    on: dispute_created
