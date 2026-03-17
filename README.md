@@ -45,11 +45,6 @@ DATABASE_URL=postgresql://... pytest tests/ -v   # include integration tests (al
 ```
 Unit tests cover the validator (metrics, expected evaluation, conditions) and compiler (scenario load and plan). Integration tests run each scenario end-to-end with the mock adapter and assert entity counts and that high-severity findings pass; they require PostgreSQL.
 
-## Roadmap
-
-- **Phase 1:** Scenario testing engine (Razorpay adapter)
-- **Phase 2:** Environment-as-a-Service (populate sandbox with realistic data)
-- **Phase 3:** Compliance & audit simulation
 
 ## License
 
