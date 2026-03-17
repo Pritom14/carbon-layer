@@ -1,50 +1,104 @@
 # Carbon Layer
 
-**Chaos engineering for payment flows.**
+Chaos engineering for payment flows.
 
-Test what breaks in your payment integration before it breaks in production. Run scenarios (dispute spikes, refund storms, payment failures) against your Razorpay test account and get a report on what your system handled—and what it didn't.
+Every company processing payments tests the happy path — payment succeeds, order fulfilled — and ships. What breaks in production is everything else: dispute spikes your system doesn't respond to, refund storms that break reconciliation, gateway errors that leave orders stuck, webhook sequences your handlers were never tested against.
 
-## Status
+Carbon Layer lets you simulate these failure modes against your own integration before your customers encounter them. Run a scenario, point it at your webhook endpoint, and see exactly what your system handles and what it doesn't.
 
-Early stage. MVP implemented: scenario engine, mock + Razorpay adapters, CLI.
+---
 
-**Run locally (no Razorpay account):**
+## Installation
+
 ```bash
-python -m venv .venv && .venv/bin/pip install -e .
-.venv/bin/carbon scenarios-list
-.venv/bin/carbon run dispute-spike --provider mock
-.venv/bin/carbon report --run-id <run_id>
+pip install carbon-layer
 ```
 
-**Webhook simulation:**
+PostgreSQL is required for storage. Create a database before the first run:
 
-Point Carbon Layer at your webhook endpoint and it will fire Razorpay-format events (`payment.captured`, `dispute.created`, `refund.processed`, etc.) at it after the scenario runs. The report shows how your endpoint responded — 2xx, 4xx, 5xx, or timeout — for each event type.
+```bash
+createdb carbon
+```
+
+Or use Docker:
+
+```bash
+docker run -d --name carbon-pg \
+  -e POSTGRES_PASSWORD=carbon \
+  -e POSTGRES_DB=carbon \
+  -p 5433:5432 postgres:15
+```
+
+Set the connection string via environment variable or `.env` file:
+
+```
+DATABASE_URL=postgresql://postgres:carbon@localhost:5433/carbon
+```
+
+---
+
+## Quickstart
+
+No Razorpay account needed to get started. The mock adapter simulates the full payment lifecycle locally.
+
+List available scenarios:
+
+```bash
+carbon scenarios-list
+```
+
+Run a scenario:
+
+```bash
+carbon run dispute-spike --provider mock
+carbon report --run-id <run_id>
+```
+
+---
+
+## Webhook Simulation
+
+The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires Razorpay-format events — `payment.captured`, `dispute.created`, `refund.processed`, and more — after the scenario runs. Payloads are signed with `X-Razorpay-Signature` (HMAC-SHA256), the same as Razorpay's live webhooks.
 
 ```bash
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks/razorpay
 ```
 
-No Razorpay account needed. Carbon generates the payloads and signs them with `X-Razorpay-Signature` (HMAC-SHA256). Pass `--webhook-url` to any scenario.
+The report shows how your endpoint responded for each event type — 2xx, 4xx, 5xx, or timeout. No Razorpay account required.
 
-**Database:** PostgreSQL only. Set `DATABASE_URL` (default: `postgresql://localhost:5432/carbon`). Create the database first: `createdb carbon`. Tables are created on first run. If you see "password authentication failed", either set `DATABASE_URL` in `.env` with your credentials, or use Docker: `docker run -d --name carbon-pg -e POSTGRES_PASSWORD=carbon -e POSTGRES_DB=carbon -p 5433:5432 postgres:15` then `DATABASE_URL=postgresql://postgres:carbon@localhost:5433/carbon` (see `.env.example`; a `.env` with this URL is created for local runs).
+---
 
-**Base SLA (mock adapter, PostgreSQL, real-world scale):** Target: **&lt; 5 s (5,000 ms)** end-to-end per scenario. Measured after optimization (single connection, bulk entity inserts, parallel adapter calls).
+## Scenarios
 
-| Scenario | Scale | Result | Measured (ms) | Target |
-|----------|--------|--------|---------------|--------|
-| dispute-spike | 1,000 orders, 1,000 captured, 150 disputes | All passed | ~440 ms | &lt; 5,000 ms ✓ |
-| payment-decline-spike | 2,000 orders, ~1,400 captured (70% success) | All passed | ~480 ms | &lt; 5,000 ms ✓ |
-| refund-storm | 2,000 orders, 2,000 captured, 500 refunds | All passed | ~520 ms | &lt; 5,000 ms ✓ |
+| Scenario | What it tests |
+|----------|---------------|
+| `dispute-spike` | 15% dispute rate — does your system respond and submit evidence? |
+| `payment-decline-spike` | 30% payment failure rate — does your retry and order state logic hold? |
+| `refund-storm` | Mass refunds on captured payments — does reconciliation break? |
+| `flash-sale` | High order and payment volume — does throughput hold? |
+| `gateway-error-burst` | Intermittent gateway errors — are orders left in inconsistent state? |
+| `min-amount` | Minimum paise transactions — are edge-case amounts handled correctly? |
+| `max-amount` | Large-value transactions — are limits and approvals handled correctly? |
 
+---
 
-**Tests:**
+## Using with Razorpay
+
+To run scenarios against your Razorpay test account:
+
 ```bash
-pip install -e ".[dev]"
-pytest tests/ -v                    # unit tests only (no DB)
-DATABASE_URL=postgresql://... pytest tests/ -v   # include integration tests (all 7 scenarios)
+carbon run dispute-spike \
+  --provider razorpay \
+  --api-key rzp_test_xxx \
+  --api-secret yyy \
+  --webhook-url https://your-staging-app.com/webhooks/razorpay
 ```
-Unit tests cover the validator (metrics, expected evaluation, conditions) and compiler (scenario load and plan). Integration tests run each scenario end-to-end with the mock adapter and assert entity counts and that high-severity findings pass; they require PostgreSQL.
 
+Or set credentials via environment variables: `RAZORPAY_API_KEY` and `RAZORPAY_API_SECRET`.
+
+Note: Razorpay's test API does not support server-side payment creation or dispute creation. Scenarios that require these (e.g. `dispute-spike`) use the mock adapter automatically for those actions. Use `--provider mock` if you don't have Razorpay test credentials.
+
+---
 
 ## License
 
