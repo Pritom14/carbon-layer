@@ -82,6 +82,44 @@ The report shows how your endpoint responded for each event type — 2xx, 4xx, 5
 
 ---
 
+## Parameter Overrides
+
+Override scenario parameters at runtime without editing YAML:
+
+```bash
+carbon run dispute-spike --provider mock --set baseline_orders=500 --set dispute_rate=0.3
+```
+
+Use `--set` multiple times for multiple parameters. Unknown keys are ignored with a warning.
+
+---
+
+## HTML Reports
+
+Export a shareable HTML report after any run:
+
+```bash
+carbon report --run-id <run_id> --format html
+```
+
+Writes `carbon_report_<run_id>.html` to the current directory. Self-contained, no external dependencies — safe to share with your team or attach to an incident report.
+
+---
+
+## CI/CD Integration
+
+Use `--callback-url` to POST a JSON run summary to your pipeline after a scenario completes:
+
+```bash
+carbon run dispute-spike --provider mock \
+  --webhook-url http://localhost:8000/webhooks/razorpay \
+  --callback-url http://localhost:8000/carbon/results
+```
+
+The callback payload includes pass/fail status, findings summary, and webhook delivery counts. Your pipeline can fail the build if `passed` is false.
+
+---
+
 ## Using with Razorpay
 
 To run scenarios against your Razorpay test account:
