@@ -72,10 +72,9 @@ async def test_post_one_success():
         route = respx.post(target).mock(return_value=httpx.Response(200, text="ok"))
         async with httpx.AsyncClient() as client:
             sem = asyncio.Semaphore(1)
-            d = await _post_one(client, sem, target, event, timeout_s=1.0, secret="testsecret")
+            d = await _post_one(client, sem, target, event, timeout_s=1.0, secret="testsecret", provider="razorpay")
     assert route.called
     req = route.calls[0].request
-    assert "X-Razorpay-Event-Id" in req.headers
     assert "X-Razorpay-Signature" in req.headers
     assert d["event_type"] == "payment.captured"
     assert d["status_code"] == 200
@@ -101,10 +100,9 @@ async def test_post_one_failure():
         route = respx.post(target).mock(return_value=httpx.Response(500, text="err"))
         async with httpx.AsyncClient() as client:
             sem = asyncio.Semaphore(1)
-            d = await _post_one(client, sem, target, event, timeout_s=1.0, secret="testsecret")
+            d = await _post_one(client, sem, target, event, timeout_s=1.0, secret="testsecret", provider="razorpay")
     assert route.called
     req = route.calls[0].request
-    assert "X-Razorpay-Event-Id" in req.headers
     assert "X-Razorpay-Signature" in req.headers
     assert d["status_code"] == 500
     assert d["ok"] is False

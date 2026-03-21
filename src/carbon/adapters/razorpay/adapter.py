@@ -34,8 +34,8 @@ class RazorpayAdapter:
 
     async def create_payment(self, order_id: str, params: dict) -> dict:
         raise RazorpayAdapterError(
-            "Razorpay does not expose a server-side create_payment API. "
-            "Payments are created by the customer (Checkout/Payment Link). Use --provider mock for full scenario runs."
+            "Razorpay's server-side payment API (S2S) requires special permissions. "
+            "Standard flow uses Checkout/Payment Link on the client side. Use --provider mock for full scenario runs."
         )
 
     async def capture_payment(self, payment_id: str, amount: int) -> dict:

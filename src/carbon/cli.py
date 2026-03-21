@@ -39,16 +39,19 @@ def scenarios_list() -> None:
 @app.command()
 def run(
     scenario_name: str = typer.Argument(..., help="Scenario name (e.g. dispute-spike)"),
-    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock or razorpay"),
+    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, or cashfree"),
     api_key: Optional[str] = typer.Option(None, "--api-key", envvar="RAZORPAY_API_KEY"),
     api_secret: Optional[str] = typer.Option(None, "--api-secret", envvar="RAZORPAY_API_SECRET"),
+    stripe_key: Optional[str] = typer.Option(None, "--stripe-key", envvar="STRIPE_API_KEY"),
+    cashfree_id: Optional[str] = typer.Option(None, "--cashfree-id", envvar="CASHFREE_CLIENT_ID"),
+    cashfree_secret: Optional[str] = typer.Option(None, "--cashfree-secret", envvar="CASHFREE_CLIENT_SECRET"),
     webhook_url: Optional[str] = typer.Option(
-        None, "--webhook-url", help="POST Razorpay-format webhook events to this URL after the run"
+        None, "--webhook-url", help="POST webhook events to this URL after the run"
     ),
     webhook_secret: Optional[str] = typer.Option(
         None,
         "--webhook-secret",
-        help="Secret used to compute X-Razorpay-Signature for webhook simulation",
+        help="Secret used to sign webhook payloads (HMAC-SHA256)",
     ),
     set_params: Optional[list[str]] = typer.Option(
         None, "--set", help="Override scenario parameters. Format: key=value. Can be used multiple times."
@@ -59,12 +62,37 @@ def run(
 ) -> None:
     """Run a scenario and print report."""
     settings = get_settings()
+
+    # Resolve credentials per provider
     if provider == "razorpay" and not (api_key and api_secret):
         api_key = settings.razorpay_api_key
         api_secret = settings.razorpay_api_secret
     if provider == "razorpay" and not (api_key and api_secret):
         console.print("[yellow]Razorpay keys not set. Using mock adapter.[/yellow]")
         provider = "mock"
+
+    if provider == "stripe" and not stripe_key:
+        stripe_key = settings.stripe_api_key
+    if provider == "stripe" and not stripe_key:
+        console.print("[yellow]Stripe key not set. Using mock adapter.[/yellow]")
+        provider = "mock"
+
+    if provider == "cashfree" and not (cashfree_id and cashfree_secret):
+        cashfree_id = settings.cashfree_client_id
+        cashfree_secret = settings.cashfree_client_secret
+    if provider == "cashfree" and not (cashfree_id and cashfree_secret):
+        console.print("[yellow]Cashfree credentials not set. Using mock adapter.[/yellow]")
+        provider = "mock"
+
+    # Map provider-specific keys to the adapter registry's api_key/api_secret params
+    if provider == "stripe":
+        effective_key = stripe_key
+    elif provider == "cashfree":
+        effective_key = cashfree_id
+        api_secret = cashfree_secret
+    else:
+        effective_key = api_key
+
     try:
         _, scenario = load_scenario(scenario_name)
     except LookupError:
@@ -87,7 +115,7 @@ def run(
             else:
                 overrides[key.strip()] = raw_value
     plan = compile_scenario(scenario, overrides=overrides or None)
-    adapter = get_adapter(provider, api_key=api_key, api_secret=api_secret)
+    adapter = get_adapter(provider, api_key=effective_key, api_secret=api_secret)
     run_id = asyncio.run(_do_run(plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url))
     console.print(f"\n[green]Run completed: {run_id}[/green]")
     asyncio.run(print_report(run_id))
@@ -107,7 +135,12 @@ async def _do_run(
     try:
         await run_plan(plan, run_id, provider, adapter)
         if webhook_url:
-            await send_webhooks(run_id, target_url=webhook_url, secret=webhook_secret or "carbon")
+            await send_webhooks(
+                run_id,
+                target_url=webhook_url,
+                secret=webhook_secret or "carbon",
+                provider=provider,
+            )
         await run_validations(run_id)
         if callback_url:
             result = await post_run_callback(run_id, callback_url)
