@@ -1,4 +1,4 @@
-"""Async webhook sender with delivery recording."""
+"""Async webhook sender with provider-aware signing and delivery recording."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -17,6 +18,50 @@ from carbon.storage.repo import get_entity_map, insert_webhook_deliveries_bulk
 from carbon.webhook.payloads import build_events_from_entity_map
 
 
+def _sign_razorpay(body: bytes, secret: str) -> dict[str, str]:
+    """Razorpay signing: HMAC-SHA256 of the raw JSON body."""
+    signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "X-Razorpay-Signature": signature,
+    }
+
+
+def _sign_stripe(body: bytes, secret: str) -> dict[str, str]:
+    """Stripe signing: t=timestamp,v1=HMAC-SHA256(secret, timestamp.body)."""
+    timestamp = str(int(time.time()))
+    signed_payload = f"{timestamp}.".encode("utf-8") + body
+    signature = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "Stripe-Signature": f"t={timestamp},v1={signature}",
+    }
+
+
+def _sign_cashfree(body: bytes, secret: str) -> dict[str, str]:
+    """Cashfree signing: Base64(HMAC-SHA256(timestamp + body, secret))."""
+    import base64
+
+    timestamp = str(int(time.time() * 1000))  # milliseconds
+    signed_payload = timestamp.encode("utf-8") + body
+    signature = base64.b64encode(
+        hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).digest()
+    ).decode("utf-8")
+    return {
+        "Content-Type": "application/json",
+        "x-webhook-signature": signature,
+        "x-webhook-timestamp": timestamp,
+        "x-webhook-version": "2025-01-01",
+    }
+
+
+_SIGNERS = {
+    "razorpay": _sign_razorpay,
+    "stripe": _sign_stripe,
+    "cashfree": _sign_cashfree,
+}
+
+
 async def _post_one(
     client: httpx.AsyncClient,
     sem: asyncio.Semaphore,
@@ -24,6 +69,7 @@ async def _post_one(
     event: dict,
     timeout_s: float,
     secret: str,
+    provider: str,
 ) -> dict:
     async with sem:
         sent_at = datetime.utcnow()
@@ -35,16 +81,11 @@ async def _post_one(
         response_body = None
         try:
             body = json.dumps(event["payload"], separators=(",", ":"), sort_keys=True).encode("utf-8")
-            signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
-            headers = {
-                "Content-Type": "application/json",
-                "X-Razorpay-Event-Id": event_id,
-                "X-Razorpay-Signature": signature,
-            }
+            signer = _SIGNERS.get(provider, _sign_razorpay)
+            headers = signer(body, secret)
             resp = await client.post(target_url, content=body, headers=headers, timeout=timeout_s)
             status_code = resp.status_code
             ok = 200 <= resp.status_code < 300
-            # Store small response body for debugging; truncate to avoid huge DB rows.
             if resp.text:
                 response_body = resp.text[:500]
         except Exception as e:
@@ -73,24 +114,24 @@ async def send_webhooks(
     concurrency: int = 25,
     timeout_s: float = 5.0,
     account_id: str = "acc_carbon",
+    provider: str = "razorpay",
 ) -> list[dict]:
     """
-    Build Razorpay-format webhooks from entity_map, POST them to target_url,
+    Build provider-format webhooks from entity_map, POST them to target_url,
     and record delivery attempts in webhook_deliveries.
     """
     conn = await get_connection()
     try:
         entity_map = await get_entity_map(run_id, conn=conn)
-        events = build_events_from_entity_map(entity_map, account_id=account_id)
+        events = build_events_from_entity_map(entity_map, account_id=account_id, provider=provider)
         if not events:
             return []
         sem = asyncio.Semaphore(max(1, int(concurrency)))
         async with httpx.AsyncClient() as client:
             deliveries = await asyncio.gather(
-                *[_post_one(client, sem, target_url, e, timeout_s, secret) for e in events]
+                *[_post_one(client, sem, target_url, e, timeout_s, secret, provider) for e in events]
             )
         await insert_webhook_deliveries_bulk(conn, run_id, target_url, deliveries)
         return deliveries
     finally:
         await conn.close()
-

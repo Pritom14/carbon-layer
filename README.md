@@ -66,7 +66,7 @@ No payment gateway account needed. The mock adapter simulates the full payment l
 
 ## Webhook Simulation
 
-The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires payment gateway events — `payment.captured`, `dispute.created`, `refund.processed`, and more — after the scenario runs. Payloads are signed with HMAC-SHA256, matching real payment gateway webhook formats.
+The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires provider-specific webhook events — `payment.captured`, `payment_intent.succeeded`, `PAYMENT_SUCCESS_WEBHOOK`, and more — after the scenario runs. Payloads are signed exactly like real webhooks from each provider (Razorpay, Stripe, Cashfree).
 
 ```bash
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
@@ -128,19 +128,59 @@ The callback payload includes pass/fail status, findings summary, and webhook de
 
 ---
 
-## Using with a Payment Gateway
+## Supported Payment Gateways
 
-To run scenarios against your payment gateway's test environment, pass your credentials:
+Carbon Layer generates provider-specific webhook payloads with correct signing for each gateway.
+
+| Provider | Webhook Format | Signing | CLI Flag |
+|----------|---------------|---------|----------|
+| Mock | Razorpay-format | HMAC-SHA256 | `--provider mock` |
+| Razorpay | `X-Razorpay-Signature` | HMAC-SHA256 | `--provider razorpay` |
+| Stripe | `Stripe-Signature: t=...,v1=...` | HMAC-SHA256 | `--provider stripe` |
+| Cashfree | `x-webhook-signature` | Base64(HMAC-SHA256) | `--provider cashfree` |
+
+### Razorpay
 
 ```bash
 carbon run dispute-spike \
   --provider razorpay \
   --api-key your_test_key \
   --api-secret your_test_secret \
-  --webhook-url https://your-staging-app.com/webhooks
+  --webhook-url https://your-app.com/webhooks
 ```
 
-Or set credentials via environment variables. Use `--provider mock` if you don't have test credentials — mock mode simulates the full payment lifecycle locally.
+Or set `RAZORPAY_API_KEY` and `RAZORPAY_API_SECRET` as environment variables.
+
+### Stripe
+
+```bash
+carbon run dispute-spike \
+  --provider stripe \
+  --stripe-key sk_test_xxx \
+  --webhook-url https://your-app.com/webhooks
+```
+
+Or set `STRIPE_API_KEY` as an environment variable.
+
+### Cashfree
+
+```bash
+carbon run dispute-spike \
+  --provider cashfree \
+  --cashfree-id your_app_id \
+  --cashfree-secret your_secret_key \
+  --webhook-url https://your-app.com/webhooks
+```
+
+Or set `CASHFREE_CLIENT_ID` and `CASHFREE_CLIENT_SECRET` as environment variables.
+
+### Mock (no credentials needed)
+
+```bash
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
+```
+
+Mock mode simulates the full payment lifecycle locally. Use this if you don't have test credentials — all 7 scenarios work out of the box.
 
 ---
 

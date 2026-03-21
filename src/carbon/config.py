@@ -17,6 +17,9 @@ class Settings(BaseSettings):
 
     razorpay_api_key: Optional[str] = None
     razorpay_api_secret: Optional[str] = None
+    stripe_api_key: Optional[str] = None
+    cashfree_client_id: Optional[str] = None
+    cashfree_client_secret: Optional[str] = None
     carbon_scenarios_dir: Path = Path("scenarios")
 
     # SQLite (default, zero config) or PostgreSQL.
@@ -27,6 +30,14 @@ class Settings(BaseSettings):
     @property
     def has_razorpay_credentials(self) -> bool:
         return bool(self.razorpay_api_key and self.razorpay_api_secret)
+
+    @property
+    def has_stripe_credentials(self) -> bool:
+        return bool(self.stripe_api_key)
+
+    @property
+    def has_cashfree_credentials(self) -> bool:
+        return bool(self.cashfree_client_id and self.cashfree_client_secret)
 
 
 def get_settings() -> Settings:
