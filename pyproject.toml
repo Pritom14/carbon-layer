@@ -25,7 +25,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "pyyaml>=6.0",
-    "asyncpg>=0.29.0",
+    "aiosqlite>=0.19.0",
     "tenacity>=8.2.0",
     "rich>=13.0.0",
 ]
@@ -36,6 +36,9 @@ Repository = "https://github.com/Pritom14/carbon-layer"
 Issues = "https://github.com/Pritom14/carbon-layer/issues"
 
 [project.optional-dependencies]
+postgres = [
+    "asyncpg>=0.29.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",

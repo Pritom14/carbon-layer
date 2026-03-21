@@ -10,61 +10,69 @@ Carbon Layer lets you simulate these failure modes against your own integration 
 
 ## Installation
 
+### Option A: Quick start (no database needed)
+
 ```bash
 pip install carbon-layer
 ```
 
-PostgreSQL is required for storage. Create a database before the first run:
+Works out of the box. Carbon Layer uses SQLite by default — data is stored in `~/.carbon/carbon.db`. Nothing else to install or configure.
+
+### Option B: With PostgreSQL (if you already have it)
 
 ```bash
-createdb carbon
+pip install carbon-layer[postgres]
 ```
 
-Or use Docker:
+Then set your connection string via a `.env` file or environment variable:
+
+```bash
+# .env file in your project directory
+DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/carbon
+```
+
+Or with Docker:
 
 ```bash
 docker run -d --name carbon-pg \
   -e POSTGRES_PASSWORD=carbon \
   -e POSTGRES_DB=carbon \
-  -p 5433:5432 postgres:15
+  -p 5432:5432 postgres:15
+
+# then set:
+DATABASE_URL=postgresql://postgres:carbon@localhost:5432/carbon
 ```
 
-Set the connection string via environment variable or `.env` file:
-
-```
-DATABASE_URL=postgresql://postgres:carbon@localhost:5433/carbon
-```
+Both options support all features. You can start with SQLite and switch to PostgreSQL anytime by installing the extra and setting `DATABASE_URL`.
 
 ---
 
 ## Quickstart
 
-No Razorpay account needed to get started. The mock adapter simulates the full payment lifecycle locally.
-
-List available scenarios:
-
 ```bash
+# List available scenarios
 carbon scenarios-list
-```
 
-Run a scenario:
-
-```bash
+# Run your first scenario
 carbon run dispute-spike --provider mock
+
+# View the report (use the run_id from the output above)
 carbon report --run-id <run_id>
 ```
+
+No payment gateway account needed. The mock adapter simulates the full payment lifecycle locally.
 
 ---
 
 ## Webhook Simulation
 
-The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires Razorpay-format events — `payment.captured`, `dispute.created`, `refund.processed`, and more — after the scenario runs. Payloads are signed with `X-Razorpay-Signature` (HMAC-SHA256), the same as Razorpay's live webhooks.
+The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires payment gateway events — `payment.captured`, `dispute.created`, `refund.processed`, and more — after the scenario runs. Payloads are signed with HMAC-SHA256, matching real payment gateway webhook formats.
 
 ```bash
-carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks/razorpay
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
 ```
 
-The report shows how your endpoint responded for each event type — 2xx, 4xx, 5xx, or timeout. No Razorpay account required.
+The report shows how your endpoint responded for each event type — 2xx, 4xx, 5xx, or timeout. No payment gateway account required.
 
 ---
 
@@ -112,7 +120,7 @@ Use `--callback-url` to POST a JSON run summary to your pipeline after a scenari
 
 ```bash
 carbon run dispute-spike --provider mock \
-  --webhook-url http://localhost:8000/webhooks/razorpay \
+  --webhook-url http://localhost:8000/webhooks \
   --callback-url http://localhost:8000/carbon/results
 ```
 
@@ -120,21 +128,19 @@ The callback payload includes pass/fail status, findings summary, and webhook de
 
 ---
 
-## Using with Razorpay
+## Using with a Payment Gateway
 
-To run scenarios against your Razorpay test account:
+To run scenarios against your payment gateway's test environment, pass your credentials:
 
 ```bash
 carbon run dispute-spike \
   --provider razorpay \
-  --api-key rzp_test_xxx \
-  --api-secret yyy \
-  --webhook-url https://your-staging-app.com/webhooks/razorpay
+  --api-key your_test_key \
+  --api-secret your_test_secret \
+  --webhook-url https://your-staging-app.com/webhooks
 ```
 
-Or set credentials via environment variables: `RAZORPAY_API_KEY` and `RAZORPAY_API_SECRET`.
-
-Note: Razorpay's test API does not support server-side payment creation or dispute creation. Scenarios that require these (e.g. `dispute-spike`) use the mock adapter automatically for those actions. Use `--provider mock` if you don't have Razorpay test credentials.
+Or set credentials via environment variables. Use `--provider mock` if you don't have test credentials — mock mode simulates the full payment lifecycle locally.
 
 ---
 

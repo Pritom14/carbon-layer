@@ -19,8 +19,10 @@ class Settings(BaseSettings):
     razorpay_api_secret: Optional[str] = None
     carbon_scenarios_dir: Path = Path("scenarios")
 
-    # PostgreSQL (required). Default: local DB "carbon" on port 5432.
-    database_url: str = "postgresql://localhost:5432/carbon"
+    # SQLite (default, zero config) or PostgreSQL.
+    # SQLite:     sqlite:///~/.carbon/carbon.db  (default)
+    # PostgreSQL: postgresql://localhost:5432/carbon
+    database_url: str = "sqlite:///~/.carbon/carbon.db"
 
     @property
     def has_razorpay_credentials(self) -> bool:
