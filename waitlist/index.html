@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carbon Layer — Early Access Waitlist</title>
+    <meta name="description" content="Join the waitlist for Carbon Layer's hosted platform — chaos testing for payment flows with dashboards, compliance reports, and scheduled runs.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 720px;
+            width: 100%;
+            padding: 60px 24px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 4px 12px;
+            border-radius: 20px;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 40px;
+            font-weight: 700;
+            line-height: 1.2;
+            color: #ffffff;
+            margin-bottom: 16px;
+        }
+
+        h1 span {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            font-size: 18px;
+            line-height: 1.6;
+            color: #a0a0a0;
+            margin-bottom: 48px;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 48px;
+        }
+
+        .feature {
+            background: #141414;
+            border: 1px solid #222;
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .feature-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .feature h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+
+        .feature p {
+            font-size: 13px;
+            color: #888;
+            line-height: 1.5;
+        }
+
+        .form-section {
+            background: #141414;
+            border: 1px solid #222;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 48px;
+        }
+
+        .form-section h2 {
+            font-size: 22px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .form-section p {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 24px;
+        }
+
+        .form-embed {
+            width: 100%;
+            border: none;
+            border-radius: 8px;
+            min-height: 500px;
+        }
+
+        .open-source-note {
+            text-align: center;
+            padding: 32px 0;
+            border-top: 1px solid #1a1a1a;
+        }
+
+        .open-source-note p {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 16px;
+        }
+
+        .open-source-note a {
+            color: #22c55e;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .open-source-note a:hover {
+            text-decoration: underline;
+        }
+
+        .links {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+        }
+
+        .cli-snippet {
+            background: #141414;
+            border: 1px solid #222;
+            border-radius: 8px;
+            padding: 14px 20px;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 14px;
+            color: #22c55e;
+            margin-bottom: 48px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .cli-snippet .prompt {
+            color: #555;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 40px 16px;
+            }
+
+            h1 {
+                font-size: 28px;
+            }
+
+            .subtitle {
+                font-size: 16px;
+            }
+
+            .features {
+                grid-template-columns: 1fr;
+            }
+
+            .links {
+                flex-direction: column;
+                align-items: center;
+                gap: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="badge">Coming Soon</div>
+
+        <h1>Chaos testing for payments.<br><span>Now with a dashboard.</span></h1>
+
+        <p class="subtitle">
+            Carbon Layer's open-source CLI already lets you simulate payment failures and test your webhook handlers. We're building a hosted platform with dashboards, scheduled runs, compliance reports, and team collaboration.
+        </p>
+
+        <div class="cli-snippet">
+            <span class="prompt">$</span> pip install carbon-layer
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">&#x1f4ca;</div>
+                <h3>Visual Dashboard</h3>
+                <p>See webhook delivery results, failure patterns, and handler health at a glance.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#x1f552;</div>
+                <h3>Scheduled Runs</h3>
+                <p>Run chaos scenarios on a schedule. Catch regressions before they hit production.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#x1f4cb;</div>
+                <h3>Compliance Reports</h3>
+                <p>Generate audit-ready PDF reports for RBI compliance and payment readiness.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">&#x1f465;</div>
+                <h3>Team Collaboration</h3>
+                <p>Share results, assign follow-ups, and track remediation across your team.</p>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h2>Join the waitlist</h2>
+            <p>Get early access and help shape the product. No spam, ever.</p>
+
+            <!--
+                INSTRUCTIONS: Replace the iframe src below with your Google Form embed URL.
+
+                To get the embed URL:
+                1. Create a Google Form (forms.google.com)
+                2. Add fields: Name, Email, Company (optional), Payment gateway you use
+                3. Click Send > Embed icon (<>)
+                4. Copy the src URL from the iframe code
+                5. Paste it below replacing YOUR_GOOGLE_FORM_EMBED_URL
+            -->
+            <iframe
+                class="form-embed"
+                src="https://docs.google.com/forms/d/e/1FAIpQLScXy00Jm7XKtYmZ3nVR_YzUNTOqbNcjtkb_MZsyR-mWcP8nbA/viewform?embedded=true"
+                title="Carbon Layer Waitlist Form"
+                loading="lazy">
+                Loading form...
+            </iframe>
+        </div>
+
+        <div class="open-source-note">
+            <p>The CLI is free and open source. Always will be.</p>
+            <div class="links">
+                <a href="https://github.com/Pritom14/carbon-layer">GitHub</a>
+                <a href="https://pypi.org/project/carbon-layer/">PyPI</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
