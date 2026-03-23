@@ -25,6 +25,15 @@ app = typer.Typer(name="carbon", help="Chaos engineering for payment flows.")
 console = Console()
 
 
+PRO_SCENARIOS = [
+    ("rbi-compliance-check", "RBI payment regulation compliance validation"),
+    ("pci-readiness-suite", "PCI DSS readiness checks for payment handlers"),
+    ("load-test-10k-tps", "10,000 TPS sustained load with webhook delivery"),
+    ("multi-gateway-failover", "Cross-provider failover under gateway outage"),
+    ("settlement-reconciliation", "End-to-end settlement and reconciliation stress test"),
+]
+
+
 @app.command()
 def scenarios_list() -> None:
     """List available scenarios."""
@@ -34,6 +43,11 @@ def scenarios_list() -> None:
         return
     for n in names:
         console.print(f"  • {n}")
+    console.print("")
+    console.print("[dim]Pro scenarios (coming soon):[/dim]")
+    for name, desc in PRO_SCENARIOS:
+        console.print(f"  [dim](locked) {name} — {desc}[/dim]")
+    console.print(f"\n[dim]Join the waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]")
 
 
 @app.command()
@@ -172,6 +186,13 @@ def report(
     format: str = typer.Option("terminal", "--format", help="Output format: terminal or html"),
 ) -> None:
     """Show report for a run."""
+    if format == "pdf":
+        console.print(
+            "[yellow]PDF export is a Carbon Layer Pro feature.[/yellow]\n"
+            "[dim]Pro includes PDF reports, scheduled runs, compliance dashboards, and more.[/dim]\n"
+            "[dim]Join the waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]"
+        )
+        raise typer.Exit(0)
     if format == "html":
         import asyncio as _asyncio
         from pathlib import Path

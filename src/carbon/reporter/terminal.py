@@ -83,3 +83,9 @@ async def print_report(run_id: str) -> None:
         console.print(wh)
 
     console.print(f"\n[dim]Run: {run_id}  Provider: {run['provider']}  Status: {run['status']}[/dim]")
+
+    # Pro teaser
+    console.print(
+        "\n[dim]Want scheduled runs, PDF reports, and compliance dashboards?[/dim]"
+        "\n[dim]Join the Carbon Layer Pro waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]"
+    )
