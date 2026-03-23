@@ -66,7 +66,7 @@ No payment gateway account needed. The mock adapter simulates the full payment l
 
 ## Webhook Simulation
 
-The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires provider-specific webhook events — `payment.captured`, `payment_intent.succeeded`, `PAYMENT_SUCCESS_WEBHOOK`, and more — after the scenario runs. Payloads are signed exactly like real webhooks from each provider (Razorpay, Stripe, Cashfree).
+The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires provider-specific webhook events — `payment.captured`, `payment_intent.succeeded`, `PAYMENT_SUCCESS_WEBHOOK`, `ORDER_SUCCEEDED`, and more — after the scenario runs. Payloads are signed exactly like real webhooks from each provider (Razorpay, Stripe, Cashfree, Juspay).
 
 ```bash
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
@@ -138,6 +138,7 @@ Carbon Layer generates provider-specific webhook payloads with correct signing f
 | Razorpay | `X-Razorpay-Signature` | HMAC-SHA256 | `--provider razorpay` |
 | Stripe | `Stripe-Signature: t=...,v1=...` | HMAC-SHA256 | `--provider stripe` |
 | Cashfree | `x-webhook-signature` | Base64(HMAC-SHA256) | `--provider cashfree` |
+| Juspay | `Authorization: Basic ...` | Basic Auth | `--provider juspay` |
 
 ### Razorpay
 
@@ -173,6 +174,18 @@ carbon run dispute-spike \
 ```
 
 Or set `CASHFREE_CLIENT_ID` and `CASHFREE_CLIENT_SECRET` as environment variables.
+
+### Juspay
+
+```bash
+carbon run dispute-spike \
+  --provider juspay \
+  --juspay-key your_api_key \
+  --juspay-merchant-id your_merchant_id \
+  --webhook-url https://your-app.com/webhooks
+```
+
+Or set `JUSPAY_API_KEY` and `JUSPAY_MERCHANT_ID` as environment variables.
 
 ### Mock (no credentials needed)
 
