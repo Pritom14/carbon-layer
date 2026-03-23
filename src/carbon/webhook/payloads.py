@@ -231,6 +231,77 @@ def _build_cashfree_payload(
 
 
 # ---------------------------------------------------------------------------
+# Juspay event mapping & payload format
+# ---------------------------------------------------------------------------
+
+JUSPAY_ENTITY_STATE_TO_EVENT: dict[tuple[str, str], str] = {
+    ("payment", "authorized"): "ORDER_SUCCEEDED",
+    ("payment", "captured"): "ORDER_SUCCEEDED",
+    ("payment", "failed"): "ORDER_FAILED",
+    ("dispute", "open"): "ORDER_FAILED",  # Juspay has no dispute webhook — map to order failure
+    ("refund", "processed"): "ORDER_REFUNDED",
+    ("refund", "failed"): "ORDER_FAILED",
+}
+
+
+def _build_juspay_payload(
+    *,
+    event_type: str,
+    entity_type: str,
+    remote_id: str,
+    metadata: dict | None,
+    account_id: str,
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    event_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    obj = dict(metadata or {})
+
+    order_id = obj.pop("order_id", remote_id or f"order_{uuid.uuid4().hex[:8]}")
+    amount = obj.pop("amount", 100)
+    if isinstance(amount, int) and amount > 100:
+        amount = amount / 100
+    currency = obj.pop("currency", "INR")
+
+    # Juspay status mapping
+    status_map = {
+        "ORDER_SUCCEEDED": "CHARGED",
+        "ORDER_FAILED": "AUTHENTICATION_FAILED",
+        "ORDER_REFUNDED": "AUTO_REFUNDED",
+    }
+
+    order_obj = {
+        "order_id": order_id,
+        "txn_id": obj.get("txn_id", f"txn_{uuid.uuid4().hex[:12]}"),
+        "status": status_map.get(event_type, "NEW"),
+        "amount": float(amount),
+        "currency": currency,
+        "customer_id": obj.get("customer_id", "carbon_test_customer"),
+        "customer_email": obj.get("customer_email", "test@carbon.dev"),
+        "customer_phone": obj.get("customer_phone", "9999999999"),
+        "date_created": event_time,
+        "last_updated": event_time,
+    }
+
+    if event_type == "ORDER_REFUNDED":
+        order_obj["refunds"] = [{
+            "unique_request_id": obj.get("unique_request_id", f"rfnd_{uuid.uuid4().hex[:8]}"),
+            "amount": float(amount),
+            "status": "SUCCESS",
+            "created": event_time,
+        }]
+
+    return {
+        "id": f"evt_{uuid.uuid4().hex[:24]}",
+        "date_created": event_time,
+        "event_name": event_type,
+        "content": {
+            "order": order_obj,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Provider dispatch
 # ---------------------------------------------------------------------------
 
@@ -238,12 +309,14 @@ _EVENT_MAPS: dict[str, dict[tuple[str, str], str]] = {
     "razorpay": RAZORPAY_ENTITY_STATE_TO_EVENT,
     "stripe": STRIPE_ENTITY_STATE_TO_EVENT,
     "cashfree": CASHFREE_ENTITY_STATE_TO_EVENT,
+    "juspay": JUSPAY_ENTITY_STATE_TO_EVENT,
 }
 
 _PAYLOAD_BUILDERS = {
     "razorpay": _build_razorpay_payload,
     "stripe": _build_stripe_payload,
     "cashfree": _build_cashfree_payload,
+    "juspay": _build_juspay_payload,
 }
 
 # Backward-compat alias

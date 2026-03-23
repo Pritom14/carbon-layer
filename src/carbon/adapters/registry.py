@@ -7,6 +7,7 @@ from carbon.adapters.mock import get_mock_adapter
 from carbon.adapters.razorpay import RazorpayAdapter
 from carbon.adapters.stripe import StripeAdapter
 from carbon.adapters.cashfree import CashfreeAdapter
+from carbon.adapters.juspay import JuspayAdapter
 
 
 def get_adapter(
@@ -28,4 +29,8 @@ def get_adapter(
         if not api_key or not api_secret:
             return get_mock_adapter()
         return CashfreeAdapter(client_id=api_key, client_secret=api_secret)
+    if provider == "juspay":
+        if not api_key or not api_secret:
+            return get_mock_adapter()
+        return JuspayAdapter(api_key=api_key, merchant_id=api_secret)
     raise ValueError(f"Unknown provider: {provider}")

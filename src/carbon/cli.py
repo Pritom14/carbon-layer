@@ -39,12 +39,14 @@ def scenarios_list() -> None:
 @app.command()
 def run(
     scenario_name: str = typer.Argument(..., help="Scenario name (e.g. dispute-spike)"),
-    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, or cashfree"),
+    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, cashfree, or juspay"),
     api_key: Optional[str] = typer.Option(None, "--api-key", envvar="RAZORPAY_API_KEY"),
     api_secret: Optional[str] = typer.Option(None, "--api-secret", envvar="RAZORPAY_API_SECRET"),
     stripe_key: Optional[str] = typer.Option(None, "--stripe-key", envvar="STRIPE_API_KEY"),
     cashfree_id: Optional[str] = typer.Option(None, "--cashfree-id", envvar="CASHFREE_CLIENT_ID"),
     cashfree_secret: Optional[str] = typer.Option(None, "--cashfree-secret", envvar="CASHFREE_CLIENT_SECRET"),
+    juspay_key: Optional[str] = typer.Option(None, "--juspay-key", envvar="JUSPAY_API_KEY"),
+    juspay_merchant_id: Optional[str] = typer.Option(None, "--juspay-merchant-id", envvar="JUSPAY_MERCHANT_ID"),
     webhook_url: Optional[str] = typer.Option(
         None, "--webhook-url", help="POST webhook events to this URL after the run"
     ),
@@ -84,12 +86,22 @@ def run(
         console.print("[yellow]Cashfree credentials not set. Using mock adapter.[/yellow]")
         provider = "mock"
 
+    if provider == "juspay" and not (juspay_key and juspay_merchant_id):
+        juspay_key = settings.juspay_api_key
+        juspay_merchant_id = settings.juspay_merchant_id
+    if provider == "juspay" and not (juspay_key and juspay_merchant_id):
+        console.print("[yellow]Juspay credentials not set. Using mock adapter.[/yellow]")
+        provider = "mock"
+
     # Map provider-specific keys to the adapter registry's api_key/api_secret params
     if provider == "stripe":
         effective_key = stripe_key
     elif provider == "cashfree":
         effective_key = cashfree_id
         api_secret = cashfree_secret
+    elif provider == "juspay":
+        effective_key = juspay_key
+        api_secret = juspay_merchant_id
     else:
         effective_key = api_key
 

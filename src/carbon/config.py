@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     stripe_api_key: Optional[str] = None
     cashfree_client_id: Optional[str] = None
     cashfree_client_secret: Optional[str] = None
+    juspay_api_key: Optional[str] = None
+    juspay_merchant_id: Optional[str] = None
     carbon_scenarios_dir: Path = Path("scenarios")
 
     # SQLite (default, zero config) or PostgreSQL.
@@ -38,6 +40,10 @@ class Settings(BaseSettings):
     @property
     def has_cashfree_credentials(self) -> bool:
         return bool(self.cashfree_client_id and self.cashfree_client_secret)
+
+    @property
+    def has_juspay_credentials(self) -> bool:
+        return bool(self.juspay_api_key and self.juspay_merchant_id)
 
 
 def get_settings() -> Settings:

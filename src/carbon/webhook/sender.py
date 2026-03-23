@@ -55,10 +55,23 @@ def _sign_cashfree(body: bytes, secret: str) -> dict[str, str]:
     }
 
 
+def _sign_juspay(body: bytes, secret: str) -> dict[str, str]:
+    """Juspay signing: Basic Auth header (username:password base64-encoded)."""
+    import base64
+
+    # secret is used as "api_key:password" — Juspay uses api_key as username, empty password
+    auth_token = base64.b64encode(f"{secret}:".encode()).decode()
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {auth_token}",
+    }
+
+
 _SIGNERS = {
     "razorpay": _sign_razorpay,
     "stripe": _sign_stripe,
     "cashfree": _sign_cashfree,
+    "juspay": _sign_juspay,
 }
 
 
