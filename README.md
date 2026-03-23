@@ -197,6 +197,22 @@ Mock mode simulates the full payment lifecycle locally. Use this if you don't ha
 
 ---
 
+## Carbon Layer Pro (coming soon)
+
+The open-source CLI covers 7 scenarios and 5 payment gateways. We're building a hosted Pro tier for teams that need more:
+
+- **Scheduled runs** — run scenarios on a cron, get notified when your handlers regress
+- **PDF reports** — export compliance-ready reports for audits and stakeholders
+- **Compliance dashboards** — track webhook handler reliability over time
+- **Pro scenarios** — RBI compliance checks, PCI readiness suite, 10k TPS load tests, multi-gateway failover, settlement reconciliation
+- **Team management** — shared runs, role-based access, audit logs
+
+The free CLI stays free and open-source (Apache 2.0). Pro is a separate hosted product.
+
+Join the waitlist: [pritom14.github.io/carbon-layer/waitlist](https://pritom14.github.io/carbon-layer/waitlist)
+
+---
+
 ## License
 
 Apache 2.0 — see [LICENSE](./LICENSE).
