@@ -19,7 +19,7 @@ from carbon.reporter.html import generate_html_report
 from carbon.scenarios import list_scenarios, load_scenario
 from carbon.storage.repo import create_run, ensure_db, update_run_status
 from carbon.validator import run_validations
-from carbon.webhook import send_webhooks
+from carbon.webhook import replay_webhooks, send_webhooks
 
 app = typer.Typer(name="carbon", help="Chaos engineering for payment flows.")
 console = Console()
@@ -75,6 +75,10 @@ def run(
     callback_url: Optional[str] = typer.Option(
         None, "--callback-url", help="POST run summary JSON to this URL after completion (for CI/CD integration)"
     ),
+    ci: bool = typer.Option(False, "--ci", help="Exit with code 1 if any webhook returned 5xx or timed out"),
+    webhook_repeat: int = typer.Option(1, "--webhook-repeat", help="Fire each webhook N times to test idempotency"),
+    webhook_order: str = typer.Option("sequence", "--webhook-order", help="Webhook delivery order: sequence, reverse, or random"),
+    webhook_signature: str = typer.Option("valid", "--webhook-signature", help="Signature mode: valid, missing, corrupted, or wrong_secret"),
 ) -> None:
     """Run a scenario and print report."""
     settings = get_settings()
@@ -142,9 +146,23 @@ def run(
                 overrides[key.strip()] = raw_value
     plan = compile_scenario(scenario, overrides=overrides or None)
     adapter = get_adapter(provider, api_key=effective_key, api_secret=api_secret)
-    run_id = asyncio.run(_do_run(plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url))
+    run_id = asyncio.run(_do_run(
+        plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
+        webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
+    ))
     console.print(f"\n[green]Run completed: {run_id}[/green]")
     asyncio.run(print_report(run_id))
+
+    if ci and webhook_url:
+        from carbon.storage.repo import get_webhook_deliveries
+        deliveries = asyncio.run(get_webhook_deliveries(run_id))
+        failures = [
+            d for d in deliveries
+            if d.get("status_code") is None or (isinstance(d.get("status_code"), int) and d["status_code"] >= 500)
+        ]
+        if failures:
+            console.print(f"[red]CI check failed: {len(failures)} webhook(s) returned 5xx or timed out.[/red]")
+            raise typer.Exit(1)
 
 
 async def _do_run(
@@ -155,6 +173,9 @@ async def _do_run(
     webhook_url: Optional[str],
     webhook_secret: Optional[str],
     callback_url: Optional[str] = None,
+    webhook_repeat: int = 1,
+    webhook_order: str = "sequence",
+    webhook_signature: str = "valid",
 ) -> str:
     await ensure_db()
     run_id = await create_run(scenario_name, provider, plan.parameters)
@@ -166,6 +187,9 @@ async def _do_run(
                 target_url=webhook_url,
                 secret=webhook_secret or "carbon",
                 provider=provider,
+                repeat=webhook_repeat,
+                order=webhook_order,
+                signature_mode=webhook_signature,
             )
         await run_validations(run_id)
         if callback_url:
@@ -178,6 +202,32 @@ async def _do_run(
         await update_run_status(run_id, "failed")
         raise e
     return run_id
+
+
+@app.command()
+def replay(
+    run_id: str = typer.Argument(..., help="Run ID to replay webhooks from"),
+    webhook_url: str = typer.Option(..., "--webhook-url", help="Target URL to replay webhooks to"),
+    provider: str = typer.Option("mock", "--provider", "-p", help="Provider for signing"),
+    webhook_secret: Optional[str] = typer.Option(None, "--webhook-secret", help="Secret for signing"),
+) -> None:
+    """Replay webhook payloads from a previous run."""
+    async def _replay() -> list:
+        await ensure_db()
+        return await replay_webhooks(
+            run_id,
+            target_url=webhook_url,
+            secret=webhook_secret or "carbon",
+            provider=provider,
+        )
+    deliveries = asyncio.run(_replay())
+    if not deliveries:
+        console.print(f"[yellow]No stored webhook payloads found for run {run_id}.[/yellow]")
+        console.print("[dim]Payloads are stored starting from v0.6. Older runs cannot be replayed.[/dim]")
+        return
+    ok_count = sum(1 for d in deliveries if d.get("ok"))
+    fail_count = len(deliveries) - ok_count
+    console.print(f"[green]Replayed {len(deliveries)} webhooks: {ok_count} succeeded, {fail_count} failed.[/green]")
 
 
 @app.command()

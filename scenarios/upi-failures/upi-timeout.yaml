@@ -1,0 +1,47 @@
+name: upi-timeout
+description: >
+  Simulates UPI payment timeouts where the payment gateway never receives
+  a terminal status from the UPI network. Tests whether your handler detects
+  stuck payments and triggers reconciliation.
+
+category: upi
+
+parameters:
+  baseline_orders:
+    default: 100
+    description: Number of UPI orders to create
+  timeout_rate:
+    default: 0.3
+    description: Fraction of payments that time out (e.g. 0.3 = 30%)
+  avg_order_value_paise:
+    default: 50000
+    description: Average order value in paise (500 INR)
+
+phases:
+  - name: baseline
+    description: Create orders and attempt UPI payments
+    actions:
+      - create_orders:
+          count: 100
+          amount_paise: 50000
+      - create_payments:
+          for_each: orders
+          success_rate: 0.7
+
+validations:
+  - check: orders_count
+    description: Baseline orders created
+    expected: ">= 100"
+    severity: high
+  - check: payment_success_rate
+    description: Payment success rate should reflect timeouts
+    expected: "< 0.8"
+    severity: high
+
+findings:
+  - condition: "payment_success_rate > 0.9"
+    message: "Too few payment failures; timeout simulation may not be working."
+    severity: medium
+  - condition: "payment_success_rate < 0.5"
+    message: "Very high failure rate; check if success_rate parameter is too low."
+    severity: low

@@ -1,0 +1,44 @@
+name: mandate-rejection
+description: >
+  Simulates UPI autopay mandate rejections where the bank rejects the
+  recurring payment mandate. Tests whether your handler correctly processes
+  mandate failures and notifies the customer.
+
+category: upi
+
+parameters:
+  baseline_orders:
+    default: 50
+    description: Number of mandate-based orders to create
+  rejection_rate:
+    default: 0.25
+    description: Fraction of mandates that get rejected (e.g. 0.25 = 25%)
+  avg_order_value_paise:
+    default: 100000
+    description: Average order value in paise (1000 INR)
+
+phases:
+  - name: baseline
+    description: Create orders and attempt mandate-based payments
+    actions:
+      - create_orders:
+          count: 50
+          amount_paise: 100000
+      - create_payments:
+          for_each: orders
+          success_rate: 0.75
+
+validations:
+  - check: orders_count
+    description: Baseline orders created
+    expected: ">= 50"
+    severity: high
+  - check: payment_success_rate
+    description: Should reflect mandate rejections
+    expected: "< 0.8"
+    severity: high
+
+findings:
+  - condition: "payment_success_rate > 0.9"
+    message: "Too few mandate rejections; check rejection_rate parameter."
+    severity: medium

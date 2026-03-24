@@ -87,6 +87,10 @@ The report shows how your endpoint responded for each event type — 2xx, 4xx, 5
 | `gateway-error-burst` | Intermittent gateway errors — are orders left in inconsistent state? |
 | `min-amount` | Minimum paise transactions — are edge-case amounts handled correctly? |
 | `max-amount` | Large-value transactions — are limits and approvals handled correctly? |
+| `upi-timeout` | UPI payments stuck without terminal status — does your reconciliation catch it? |
+| `vpa-not-found` | Invalid UPI VPA failures — does your handler distinguish VPA errors from general failures? |
+| `mandate-rejection` | UPI autopay mandate rejections — does your handler notify the customer? |
+| `settlement-delay` | Refunds on captured-but-unsettled payments — does reconciliation handle it? |
 
 ---
 
@@ -114,17 +118,77 @@ Writes `carbon_report_<run_id>.html` to the current directory. Self-contained, n
 
 ---
 
+## Webhook Resilience Testing
+
+Test how your webhook handler behaves under real-world failure conditions.
+
+### Idempotency (duplicate webhooks)
+
+Fire each webhook multiple times to test whether your handler processes duplicates:
+
+```bash
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-repeat 5
+```
+
+### Out-of-order delivery
+
+Gateways don't guarantee webhook order. Test with randomized or reversed delivery:
+
+```bash
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-order random
+```
+
+Options: `sequence` (default), `reverse`, `random`.
+
+### Signature verification
+
+Test whether your handler actually validates webhook signatures:
+
+```bash
+# Missing signatures — should your handler reject these?
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-signature missing
+
+# Corrupted signatures
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-signature corrupted
+
+# Signed with wrong secret
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-signature wrong_secret
+```
+
+Options: `valid` (default), `missing`, `corrupted`, `wrong_secret`.
+
+---
+
+## Webhook Replay
+
+Replay stored webhook payloads from any previous run. Useful for regression testing after code changes:
+
+```bash
+carbon replay <run_id> --webhook-url http://localhost:8000/webhooks
+```
+
+---
+
 ## CI/CD Integration
 
-Use `--callback-url` to POST a JSON run summary to your pipeline after a scenario completes:
+Use `--ci` to fail the build if any webhook returned 5xx or timed out:
 
 ```bash
 carbon run dispute-spike --provider mock \
   --webhook-url http://localhost:8000/webhooks \
-  --callback-url http://localhost:8000/carbon/results
+  --ci
 ```
 
-The callback payload includes pass/fail status, findings summary, and webhook delivery counts. Your pipeline can fail the build if `passed` is false.
+Use `--callback-url` to POST a JSON run summary to your pipeline:
+
+```bash
+carbon run dispute-spike --provider mock \
+  --webhook-url http://localhost:8000/webhooks \
+  --callback-url http://localhost:8000/carbon/results \
+  --ci
+```
+
+The callback payload includes pass/fail status, findings summary, and webhook delivery counts.
 
 ---
 
@@ -193,13 +257,13 @@ Or set `JUSPAY_API_KEY` and `JUSPAY_MERCHANT_ID` as environment variables.
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
 ```
 
-Mock mode simulates the full payment lifecycle locally. Use this if you don't have test credentials — all 7 scenarios work out of the box.
+Mock mode simulates the full payment lifecycle locally. Use this if you don't have test credentials — all 11 scenarios work out of the box.
 
 ---
 
 ## Carbon Layer Pro (coming soon)
 
-The open-source CLI covers 7 scenarios and 5 payment gateways. We're building a hosted Pro tier for teams that need more:
+The open-source CLI covers 11 scenarios, 5 payment gateways, and webhook resilience testing. We're building a hosted Pro tier for teams that need more:
 
 - **Scheduled runs** — run scenarios on a cron, get notified when your handlers regress
 - **PDF reports** — export compliance-ready reports for audits and stakeholders

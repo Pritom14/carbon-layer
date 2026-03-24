@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from carbon.storage.db import get_connection
-from carbon.storage.repo import get_entity_map, insert_webhook_deliveries_bulk
+from carbon.storage.repo import get_entity_map, get_webhook_payloads, insert_webhook_deliveries_bulk
 from carbon.webhook.payloads import build_events_from_entity_map
 
 
@@ -83,6 +83,7 @@ async def _post_one(
     timeout_s: float,
     secret: str,
     provider: str,
+    signature_mode: str = "valid",
 ) -> dict:
     async with sem:
         sent_at = datetime.utcnow()
@@ -96,6 +97,7 @@ async def _post_one(
             body = json.dumps(event["payload"], separators=(",", ":"), sort_keys=True).encode("utf-8")
             signer = _SIGNERS.get(provider, _sign_razorpay)
             headers = signer(body, secret)
+            headers = _apply_signature_mode(headers, signature_mode)
             resp = await client.post(target_url, content=body, headers=headers, timeout=timeout_s)
             status_code = resp.status_code
             ok = 200 <= resp.status_code < 300
@@ -116,7 +118,31 @@ async def _post_one(
             "duration_ms": duration_ms,
             "response_body": response_body,
             "sent_at": sent_at,
+            "attempt": event.get("attempt"),
+            "payload": json.dumps(event["payload"], separators=(",", ":"), sort_keys=True),
         }
+
+
+def _apply_signature_mode(headers: dict[str, str], mode: str) -> dict[str, str]:
+    """Mutate headers based on signature mode for testing handler verification."""
+    if mode == "valid":
+        return headers
+    if mode == "missing":
+        # Remove all signature-related headers
+        sig_keys = [k for k in headers if k.lower() not in ("content-type",)]
+        for k in sig_keys:
+            headers.pop(k, None)
+        return headers
+    if mode == "corrupted":
+        # Corrupt signature values by appending garbage
+        for k in list(headers):
+            if k.lower() != "content-type":
+                headers[k] = headers[k] + "CORRUPTED"
+        return headers
+    if mode == "wrong_secret":
+        # Already handled by caller passing a different secret
+        return headers
+    return headers
 
 
 async def send_webhooks(
@@ -128,10 +154,18 @@ async def send_webhooks(
     timeout_s: float = 5.0,
     account_id: str = "acc_carbon",
     provider: str = "razorpay",
+    repeat: int = 1,
+    order: str = "sequence",
+    signature_mode: str = "valid",
 ) -> list[dict]:
     """
     Build provider-format webhooks from entity_map, POST them to target_url,
     and record delivery attempts in webhook_deliveries.
+
+    Args:
+        repeat: Fire each webhook N times (test idempotency). Default 1.
+        order: 'sequence' (default), 'reverse', or 'random'.
+        signature_mode: 'valid' (default), 'missing', 'corrupted', or 'wrong_secret'.
     """
     conn = await get_connection()
     try:
@@ -139,12 +173,69 @@ async def send_webhooks(
         events = build_events_from_entity_map(entity_map, account_id=account_id, provider=provider)
         if not events:
             return []
+
+        # Duplicate: repeat each event N times
+        if repeat > 1:
+            expanded = []
+            for e in events:
+                for attempt in range(repeat):
+                    copy = dict(e)
+                    copy["attempt"] = attempt + 1
+                    expanded.append(copy)
+            events = expanded
+
+        # Reorder events
+        import random as _random
+        if order == "reverse":
+            events = list(reversed(events))
+        elif order == "random":
+            _random.shuffle(events)
+
+        # Determine signing secret
+        effective_secret = secret
+        if signature_mode == "wrong_secret":
+            effective_secret = "wrong_secret_" + secret
+
         sem = asyncio.Semaphore(max(1, int(concurrency)))
+        async with httpx.AsyncClient() as client:
+            deliveries = await asyncio.gather(
+                *[
+                    _post_one(
+                        client, sem, target_url, e, timeout_s,
+                        effective_secret, provider, signature_mode=signature_mode,
+                    )
+                    for e in events
+                ]
+            )
+        await insert_webhook_deliveries_bulk(conn, run_id, target_url, deliveries)
+        return deliveries
+    finally:
+        await conn.close()
+
+
+async def replay_webhooks(
+    source_run_id: str,
+    *,
+    target_url: str,
+    secret: str = "carbon",
+    concurrency: int = 25,
+    timeout_s: float = 5.0,
+    provider: str = "razorpay",
+) -> list[dict]:
+    """Replay stored webhook payloads from a previous run."""
+    events = await get_webhook_payloads(source_run_id)
+    if not events:
+        return []
+    sem = asyncio.Semaphore(max(1, int(concurrency)))
+    conn = await get_connection()
+    try:
         async with httpx.AsyncClient() as client:
             deliveries = await asyncio.gather(
                 *[_post_one(client, sem, target_url, e, timeout_s, secret, provider) for e in events]
             )
-        await insert_webhook_deliveries_bulk(conn, run_id, target_url, deliveries)
+        # Store replay deliveries under a new replay run ID
+        replay_run_id = f"replay_{source_run_id}"
+        await insert_webhook_deliveries_bulk(conn, replay_run_id, target_url, deliveries)
         return deliveries
     finally:
         await conn.close()
