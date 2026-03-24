@@ -1,6 +1,5 @@
 """Razorpay adapter: implements only what the API supports (no create_payment, no create_dispute)."""
 
-from carbon.adapters.base import PaymentAdapter
 from carbon.adapters.razorpay.client import RazorpayClient
 
 

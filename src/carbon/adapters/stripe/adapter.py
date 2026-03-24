@@ -1,6 +1,5 @@
 """Stripe adapter: implements what the API supports."""
 
-from carbon.adapters.base import PaymentAdapter
 from carbon.adapters.stripe.client import StripeClient
 
 

@@ -1,5 +1,10 @@
 # Carbon Layer
 
+[![PyPI](https://img.shields.io/pypi/v/carbon-layer)](https://pypi.org/project/carbon-layer/)
+[![CI](https://github.com/Pritom14/carbon-layer/actions/workflows/ci.yml/badge.svg)](https://github.com/Pritom14/carbon-layer/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/pypi/pyversions/carbon-layer)](https://pypi.org/project/carbon-layer/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 Chaos engineering for payment flows.
 
 Every company processing payments tests the happy path — payment succeeds, order fulfilled — and ships. What breaks in production is everything else: dispute spikes your system doesn't respond to, refund storms that break reconciliation, gateway errors that leave orders stuck, webhook sequences your handlers were never tested against.
@@ -44,6 +49,18 @@ DATABASE_URL=postgresql://postgres:carbon@localhost:5432/carbon
 ```
 
 Both options support all features. You can start with SQLite and switch to PostgreSQL anytime by installing the extra and setting `DATABASE_URL`.
+
+### Option C: With pipx (isolated install)
+
+```bash
+pipx install carbon-layer
+```
+
+### Option D: With Docker
+
+```bash
+docker run ghcr.io/pritom14/carbon-layer run dispute-spike --provider mock
+```
 
 ---
 
@@ -189,6 +206,20 @@ carbon run dispute-spike --provider mock \
 ```
 
 The callback payload includes pass/fail status, findings summary, and webhook delivery counts.
+
+### JSON output
+
+Pipe results to `jq`, Datadog, Slack, or any tool:
+
+```bash
+carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --output json
+```
+
+Returns structured JSON with run status, findings, webhook delivery stats, and overall pass/fail.
+
+### Example GitHub Actions workflow
+
+See [`examples/github-actions.yml`](examples/github-actions.yml) for a copy-paste workflow that runs Carbon Layer on every PR.
 
 ---
 

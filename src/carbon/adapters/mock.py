@@ -1,7 +1,6 @@
 """Mock adapter: full protocol, no network. For MVP and tests."""
 
 import uuid
-from typing import Any
 
 from carbon.adapters.base import PaymentAdapter
 

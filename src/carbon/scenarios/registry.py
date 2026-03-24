@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from carbon.config import get_settings
+from carbon.scenarios.models import Scenario
 from carbon.scenarios.parser import parse_scenario
 
 
@@ -47,9 +48,8 @@ def list_scenarios() -> list[str]:
     return sorted(names)
 
 
-def load_scenario(name: str) -> tuple[Path | None, "Scenario"]:
+def load_scenario(name: str) -> tuple[Path | None, Scenario]:
     """Load scenario by name. Returns (path, Scenario) or raises LookupError."""
-    from carbon.scenarios.models import Scenario
 
     for dir_path in [_scenarios_dir(), Path(__file__).resolve().parent.parent.parent / "scenarios"]:
         for path in _find_yaml_files(dir_path):

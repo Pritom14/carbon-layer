@@ -2,7 +2,6 @@
 
 import uuid
 
-from carbon.adapters.base import PaymentAdapter
 from carbon.adapters.juspay.client import JuspayClient
 
 
