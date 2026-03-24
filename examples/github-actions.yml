@@ -1,0 +1,54 @@
+# Example: Run Carbon Layer on every PR to test your webhook handler.
+# Copy this file to .github/workflows/carbon-layer.yml in your project.
+
+name: Payment Webhook Tests
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  webhook-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install carbon-layer
+          # Install your app's dependencies here
+          # pip install -r requirements.txt
+
+      - name: Start your app
+        run: |
+          # Replace with your app's start command
+          # python -m your_app &
+          # sleep 3  # wait for app to be ready
+          echo "Start your webhook server here"
+
+      - name: Run Carbon Layer - dispute spike
+        run: |
+          carbon run dispute-spike \
+            --provider mock \
+            --webhook-url http://localhost:8000/webhooks \
+            --ci
+
+      - name: Run Carbon Layer - refund storm
+        run: |
+          carbon run refund-storm \
+            --provider mock \
+            --webhook-url http://localhost:8000/webhooks \
+            --ci
+
+      - name: Run Carbon Layer - signature verification
+        run: |
+          carbon run dispute-spike \
+            --provider mock \
+            --webhook-url http://localhost:8000/webhooks \
+            --webhook-signature missing \
+            --ci

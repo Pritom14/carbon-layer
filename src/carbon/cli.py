@@ -79,6 +79,7 @@ def run(
     webhook_repeat: int = typer.Option(1, "--webhook-repeat", help="Fire each webhook N times to test idempotency"),
     webhook_order: str = typer.Option("sequence", "--webhook-order", help="Webhook delivery order: sequence, reverse, or random"),
     webhook_signature: str = typer.Option("valid", "--webhook-signature", help="Signature mode: valid, missing, corrupted, or wrong_secret"),
+    output: str = typer.Option("terminal", "--output", help="Output format: terminal or json"),
 ) -> None:
     """Run a scenario and print report."""
     settings = get_settings()
@@ -150,18 +151,50 @@ def run(
         plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
         webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
     ))
-    console.print(f"\n[green]Run completed: {run_id}[/green]")
-    asyncio.run(print_report(run_id))
+
+    if output == "json":
+        import json as _json
+        from carbon.storage.repo import get_findings, get_run, get_webhook_deliveries
+        run_data = asyncio.run(get_run(run_id))
+        findings = asyncio.run(get_findings(run_id))
+        deliveries = asyncio.run(get_webhook_deliveries(run_id)) if webhook_url else []
+        result = {
+            "run_id": run_id,
+            "scenario": scenario_name,
+            "provider": provider,
+            "status": run_data["status"] if run_data else "unknown",
+            "findings": [
+                {
+                    "check": f["check_name"],
+                    "severity": f["severity"],
+                    "passed": f["passed"],
+                    "message": f.get("message"),
+                }
+                for f in findings
+            ],
+            "webhooks": {
+                "total": len(deliveries),
+                "ok": sum(1 for d in deliveries if d.get("ok")),
+                "failed_5xx": sum(1 for d in deliveries if isinstance(d.get("status_code"), int) and d["status_code"] >= 500),
+                "timeout": sum(1 for d in deliveries if d.get("status_code") is None),
+            },
+            "passed": all(f["passed"] for f in findings),
+        }
+        print(_json.dumps(result, indent=2, default=str))
+    else:
+        console.print(f"\n[green]Run completed: {run_id}[/green]")
+        asyncio.run(print_report(run_id))
 
     if ci and webhook_url:
-        from carbon.storage.repo import get_webhook_deliveries
-        deliveries = asyncio.run(get_webhook_deliveries(run_id))
+        from carbon.storage.repo import get_webhook_deliveries as _get_wh
+        deliveries = asyncio.run(_get_wh(run_id))
         failures = [
             d for d in deliveries
             if d.get("status_code") is None or (isinstance(d.get("status_code"), int) and d["status_code"] >= 500)
         ]
         if failures:
-            console.print(f"[red]CI check failed: {len(failures)} webhook(s) returned 5xx or timed out.[/red]")
+            if output != "json":
+                console.print(f"[red]CI check failed: {len(failures)} webhook(s) returned 5xx or timed out.[/red]")
             raise typer.Exit(1)
 
 
