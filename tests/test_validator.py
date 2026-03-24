@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from carbon.validator.validator import (
     _compute_metrics,

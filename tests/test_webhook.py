@@ -150,7 +150,7 @@ async def test_post_one_corrupted_signature():
         route = respx.post(target).mock(return_value=httpx.Response(200, text="ok"))
         async with httpx.AsyncClient() as client:
             sem = asyncio.Semaphore(1)
-            d = await _post_one(client, sem, target, event, timeout_s=1.0, secret="testsecret", provider="razorpay", signature_mode="corrupted")
+            await _post_one(client, sem, target, event, timeout_s=1.0, secret="testsecret", provider="razorpay", signature_mode="corrupted")
     assert route.called
     req = route.calls[0].request
     sig = req.headers.get("X-Razorpay-Signature", "")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Optional
 
 import typer
@@ -47,7 +46,7 @@ def scenarios_list() -> None:
     console.print("[dim]Pro scenarios (coming soon):[/dim]")
     for name, desc in PRO_SCENARIOS:
         console.print(f"  [dim](locked) {name} — {desc}[/dim]")
-    console.print(f"\n[dim]Join the waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]")
+    console.print("\n[dim]Join the waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]")
 
 
 @app.command()
