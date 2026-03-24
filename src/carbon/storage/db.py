@@ -67,7 +67,8 @@ SCHEMA = [
         error           TEXT,
         duration_ms     INTEGER,
         response_body   TEXT,
-        sent_at         TIMESTAMP NOT NULL
+        sent_at         TIMESTAMP NOT NULL,
+        payload         TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_actions_run ON actions(run_id)",
     "CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id)",

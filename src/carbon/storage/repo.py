@@ -354,7 +354,7 @@ async def insert_webhook_deliveries_bulk(
         values: List[Any] = []
         placeholders: List[str] = []
         for d in chunk:
-            placeholders.append("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            placeholders.append("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             values.extend(
                 (
                     d["id"],
@@ -370,16 +370,41 @@ async def insert_webhook_deliveries_bulk(
                     d.get("duration_ms"),
                     d.get("response_body"),
                     d["sent_at"],
+                    d.get("payload"),
                 )
             )
         query = (
             """
             INSERT INTO webhook_deliveries
-              (id, run_id, target_url, event_type, entity_type, local_id, remote_id, status_code, ok, error, duration_ms, response_body, sent_at)
+              (id, run_id, target_url, event_type, entity_type, local_id, remote_id, status_code, ok, error, duration_ms, response_body, sent_at, payload)
             VALUES """
             + ", ".join(placeholders)
         )
         await conn.execute(query, tuple(values))
+
+
+async def get_webhook_payloads(run_id: str) -> List[dict]:
+    """Fetch stored webhook payloads for replay."""
+    conn = await get_connection()
+    try:
+        rows = await conn.fetch(
+            "SELECT event_type, entity_type, local_id, remote_id, payload FROM webhook_deliveries WHERE run_id = ? AND payload IS NOT NULL ORDER BY sent_at",
+            (run_id,),
+        )
+    finally:
+        await conn.close()
+    results = []
+    for r in rows:
+        payload_str = r.get("payload")
+        if payload_str:
+            results.append({
+                "event_type": r["event_type"],
+                "entity_type": r["entity_type"],
+                "local_id": r["local_id"],
+                "remote_id": r["remote_id"],
+                "payload": _json_load(payload_str),
+            })
+    return results
 
 
 async def get_webhook_deliveries(run_id: str) -> List[dict]:

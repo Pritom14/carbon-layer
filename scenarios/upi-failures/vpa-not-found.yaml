@@ -1,0 +1,44 @@
+name: vpa-not-found
+description: >
+  Simulates payments to invalid UPI VPAs (Virtual Payment Addresses).
+  Tests whether your handler correctly identifies and reports VPA resolution
+  failures vs general payment failures.
+
+category: upi
+
+parameters:
+  baseline_orders:
+    default: 50
+    description: Number of orders to create
+  failure_rate:
+    default: 0.4
+    description: Fraction of payments with invalid VPAs (e.g. 0.4 = 40%)
+  avg_order_value_paise:
+    default: 25000
+    description: Average order value in paise (250 INR)
+
+phases:
+  - name: baseline
+    description: Create orders and attempt payments with some invalid VPAs
+    actions:
+      - create_orders:
+          count: 50
+          amount_paise: 25000
+      - create_payments:
+          for_each: orders
+          success_rate: 0.6
+
+validations:
+  - check: orders_count
+    description: Baseline orders created
+    expected: ">= 50"
+    severity: high
+  - check: payment_success_rate
+    description: Should reflect VPA failures
+    expected: "< 0.7"
+    severity: high
+
+findings:
+  - condition: "payment_success_rate > 0.8"
+    message: "Too few VPA failures; check failure_rate parameter."
+    severity: medium
