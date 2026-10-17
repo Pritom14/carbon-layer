@@ -308,6 +308,22 @@ Join the waitlist: [pritom14.github.io/carbon-layer/waitlist](https://pritom14.g
 
 ---
 
+## Local setup
+
+To work on Carbon Layer itself:
+
+```bash
+git clone https://github.com/Pritom14/carbon-layer.git
+cd carbon-layer
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for more.
+
+---
+
 ## License
 
 Apache 2.0 — see [LICENSE](./LICENSE).
