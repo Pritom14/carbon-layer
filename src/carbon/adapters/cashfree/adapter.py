@@ -8,7 +8,6 @@ from carbon.adapters.cashfree.client import CashfreeClient
 class CashfreeAdapterError(Exception):
     """Raised when an operation is not supported by Cashfree API."""
 
-    pass
 
 
 class CashfreeAdapter:

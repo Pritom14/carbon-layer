@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Self
 
 from carbon.config import get_settings
 
@@ -113,14 +113,14 @@ class _SQLiteConnection:
         await self._conn.execute(query, args)
         await self._conn.commit()
 
-    async def fetch(self, query: str, *params: Any) -> List[dict]:
+    async def fetch(self, query: str, *params: Any) -> list[dict]:
         args = params[0] if len(params) == 1 and isinstance(params[0], (list, tuple)) else params
         cursor = await self._conn.execute(query, args)
         rows = await cursor.fetchall()
         columns = [d[0] for d in cursor.description] if cursor.description else []
         return [dict(zip(columns, row)) for row in rows]
 
-    async def fetchrow(self, query: str, *params: Any) -> Optional[dict]:
+    async def fetchrow(self, query: str, *params: Any) -> dict | None:
         args = params[0] if len(params) == 1 and isinstance(params[0], (list, tuple)) else params
         cursor = await self._conn.execute(query, args)
         row = await cursor.fetchone()
@@ -132,10 +132,10 @@ class _SQLiteConnection:
     async def close(self) -> None:
         await self._conn.close()
 
-    async def __aenter__(self) -> "_SQLiteConnection":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
 
@@ -154,13 +154,13 @@ class _PostgresConnection:
         args = list(params[0]) if len(params) == 1 and isinstance(params[0], (list, tuple)) else list(params)
         await self._conn.execute(q, *args)
 
-    async def fetch(self, query: str, *params: Any) -> List[dict]:
+    async def fetch(self, query: str, *params: Any) -> list[dict]:
         q = _sqlite_to_pg_placeholders(query)
         args = list(params[0]) if len(params) == 1 and isinstance(params[0], (list, tuple)) else list(params)
         rows = await self._conn.fetch(q, *args)
         return [dict(r) for r in rows]
 
-    async def fetchrow(self, query: str, *params: Any) -> Optional[dict]:
+    async def fetchrow(self, query: str, *params: Any) -> dict | None:
         q = _sqlite_to_pg_placeholders(query)
         args = list(params[0]) if len(params) == 1 and isinstance(params[0], (list, tuple)) else list(params)
         row = await self._conn.fetchrow(q, *args)
@@ -169,10 +169,10 @@ class _PostgresConnection:
     async def close(self) -> None:
         await self._conn.close()
 
-    async def __aenter__(self) -> "_PostgresConnection":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
 

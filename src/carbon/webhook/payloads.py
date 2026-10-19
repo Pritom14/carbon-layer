@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import UTC
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Razorpay event mapping & payload format
@@ -136,9 +136,9 @@ def _build_cashfree_payload(
     metadata: dict | None,
     account_id: str,
 ) -> dict[str, Any]:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    event_time = datetime.now(timezone.utc).isoformat()
+    event_time = datetime.now(UTC).isoformat()
     obj = dict(metadata or {})
 
     if entity_type == "payment":
@@ -252,9 +252,9 @@ def _build_juspay_payload(
     metadata: dict | None,
     account_id: str,
 ) -> dict[str, Any]:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    event_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    event_time = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     obj = dict(metadata or {})
 
     order_id = obj.pop("order_id", remote_id or f"order_{uuid.uuid4().hex[:8]}")

@@ -68,7 +68,7 @@ def _evaluate_expected(actual: Any, expected: Any) -> tuple[bool, str]:
             except ValueError:
                 return False, f"invalid expected value: {val_str!r}"
             try:
-                actual_num = float(actual) if isinstance(actual, (int, float)) else float(actual)
+                actual_num = float(actual)
             except (TypeError, ValueError):
                 actual_num = actual
             if op == ">=":

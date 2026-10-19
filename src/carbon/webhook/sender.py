@@ -29,7 +29,7 @@ def _sign_razorpay(body: bytes, secret: str) -> dict[str, str]:
 def _sign_stripe(body: bytes, secret: str) -> dict[str, str]:
     """Stripe signing: t=timestamp,v1=HMAC-SHA256(secret, timestamp.body)."""
     timestamp = str(int(time.time()))
-    signed_payload = f"{timestamp}.".encode("utf-8") + body
+    signed_payload = f"{timestamp}.".encode() + body
     signature = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
     return {
         "Content-Type": "application/json",

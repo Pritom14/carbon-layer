@@ -1,6 +1,6 @@
 """Cashfree Payments API client (async httpx)."""
 
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -27,12 +27,12 @@ class CashfreeClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def post(self, path: str, json: Optional[dict] = None) -> dict:
+    async def post(self, path: str, json: dict | None = None) -> dict:
         r = await self._client.post(path, json=json or {})
         r.raise_for_status()
         return r.json() if r.content else {}
 
-    async def get(self, path: str, params: Optional[dict] = None) -> Any:
+    async def get(self, path: str, params: dict | None = None) -> Any:
         r = await self._client.get(path, params=params or {})
         r.raise_for_status()
         return r.json() if r.content else {}
@@ -44,8 +44,8 @@ class CashfreeClient:
         currency: str = "INR",
         customer_id: str = "carbon_test_customer",
         customer_phone: str = "9999999999",
-        order_id: Optional[str] = None,
-        order_note: Optional[str] = None,
+        order_id: str | None = None,
+        order_note: str | None = None,
     ) -> dict:
         payload: dict[str, Any] = {
             "order_amount": amount,
@@ -86,7 +86,7 @@ class CashfreeClient:
         order_id: str,
         refund_amount: float,
         refund_id: str,
-        refund_note: Optional[str] = None,
+        refund_note: str | None = None,
         refund_speed: str = "STANDARD",
     ) -> dict:
         payload: dict[str, Any] = {

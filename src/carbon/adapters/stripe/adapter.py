@@ -6,7 +6,6 @@ from carbon.adapters.stripe.client import StripeClient
 class StripeAdapterError(Exception):
     """Raised when an operation is not supported by Stripe API."""
 
-    pass
 
 
 class StripeAdapter:

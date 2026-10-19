@@ -1,6 +1,6 @@
 """Stripe API client (async httpx)."""
 
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -20,19 +20,19 @@ class StripeClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def post(self, path: str, data: Optional[dict] = None) -> dict:
+    async def post(self, path: str, data: dict | None = None) -> dict:
         r = await self._client.post(path, data=data or {})
         r.raise_for_status()
         return r.json() if r.content else {}
 
-    async def get(self, path: str, params: Optional[dict] = None) -> Any:
+    async def get(self, path: str, params: dict | None = None) -> Any:
         r = await self._client.get(path, params=params or {})
         r.raise_for_status()
         return r.json() if r.content else {}
 
     # Payment Intents (Stripe's equivalent of orders + payments)
     async def create_payment_intent(
-        self, amount: int, currency: str = "usd", metadata: Optional[dict] = None
+        self, amount: int, currency: str = "usd", metadata: dict | None = None
     ) -> dict:
         payload: dict[str, Any] = {"amount": amount, "currency": currency}
         if metadata:
@@ -50,7 +50,7 @@ class StripeClient:
         return await self.get(f"/payment_intents/{pi_id}")
 
     # Refunds
-    async def create_refund(self, payment_intent_id: str, amount: Optional[int] = None) -> dict:
+    async def create_refund(self, payment_intent_id: str, amount: int | None = None) -> dict:
         payload: dict[str, Any] = {"payment_intent": payment_intent_id}
         if amount is not None:
             payload["amount"] = amount
@@ -64,7 +64,7 @@ class StripeClient:
         return out.get("data", [])
 
     # Disputes (read-only)
-    async def list_disputes(self, params: Optional[dict] = None) -> list[dict]:
+    async def list_disputes(self, params: dict | None = None) -> list[dict]:
         out = await self.get("/disputes", params=params or {})
         return out.get("data", [])
 

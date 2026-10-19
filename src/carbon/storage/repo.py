@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any
 
 from carbon.storage.db import get_connection, init_db
 
 
-def _json_dump(obj: dict | list | None) -> Optional[str]:
+def _json_dump(obj: dict | list | None) -> str | None:
     if obj is None:
         return None
     return json.dumps(obj)
@@ -49,9 +49,9 @@ async def create_run(
 async def update_run_status(
     run_id: str,
     status: str,
-    completed_at: Optional[datetime] = None,
-    summary: Optional[dict] = None,
-    conn: Optional[Any] = None,
+    completed_at: datetime | None = None,
+    summary: dict | None = None,
+    conn: Any | None = None,
 ) -> None:
     own_conn = conn is None
     if conn is None:
@@ -77,7 +77,7 @@ async def update_run_status(
             await conn.close()
 
 
-async def set_run_started(run_id: str, conn: Optional[Any] = None) -> None:
+async def set_run_started(run_id: str, conn: Any | None = None) -> None:
     own_conn = conn is None
     if conn is None:
         conn = await get_connection()
@@ -96,12 +96,12 @@ async def insert_action(
     phase: str,
     action_type: str,
     parameters: dict,
-    dependencies: Optional[List[str]],
+    dependencies: list[str] | None,
     status: str = "pending",
-    result: Optional[dict] = None,
-    error: Optional[str] = None,
+    result: dict | None = None,
+    error: str | None = None,
     retry_count: int = 0,
-    conn: Optional[Any] = None,
+    conn: Any | None = None,
 ) -> str:
     action_id = f"act_{uuid.uuid4().hex[:12]}"
     own_conn = conn is None
@@ -133,7 +133,7 @@ async def insert_action(
     return action_id
 
 
-async def update_action_result(action_id: str, result: Optional[dict] = None, error: Optional[str] = None, conn: Optional[Any] = None) -> None:
+async def update_action_result(action_id: str, result: dict | None = None, error: str | None = None, conn: Any | None = None) -> None:
     own_conn = conn is None
     if conn is None:
         conn = await get_connection()
@@ -151,10 +151,10 @@ async def insert_entity_mapping(
     run_id: str,
     local_id: str,
     entity_type: str,
-    remote_id: Optional[str],
+    remote_id: str | None,
     provider: str,
-    state: Optional[str] = None,
-    metadata: Optional[dict] = None,
+    state: str | None = None,
+    metadata: dict | None = None,
 ) -> None:
     created = datetime.utcnow()
     meta_json = _json_dump(metadata)
@@ -177,11 +177,11 @@ async def insert_entity_mapping(
         await conn.close()
 
 
-def _entity_map_row(local_id: str, entity_type: str, remote_id: str, state: Optional[str], metadata: Optional[dict]) -> dict:
+def _entity_map_row(local_id: str, entity_type: str, remote_id: str, state: str | None, metadata: dict | None) -> dict:
     return {"local_id": local_id, "entity_type": entity_type, "remote_id": remote_id or "", "state": state, "metadata": metadata}
 
 
-async def insert_entity_mappings_bulk(conn: Any, run_id: str, provider: str, rows: List[dict]) -> None:
+async def insert_entity_mappings_bulk(conn: Any, run_id: str, provider: str, rows: list[dict]) -> None:
     """Insert many entity_map rows in one or few round-trips. Each row: local_id, entity_type, remote_id, state, metadata."""
     if not rows:
         return
@@ -189,8 +189,8 @@ async def insert_entity_mappings_bulk(conn: Any, run_id: str, provider: str, row
     BATCH = 300
     for i in range(0, len(rows), BATCH):
         chunk = rows[i : i + BATCH]
-        values: List[Any] = []
-        placeholders: List[str] = []
+        values: list[Any] = []
+        placeholders: list[str] = []
         for r in chunk:
             placeholders.append("(?, ?, ?, ?, ?, ?, ?, ?)")
             values.extend((
@@ -221,8 +221,8 @@ async def insert_finding(
     check_name: str,
     severity: str,
     passed: bool,
-    message: Optional[str] = None,
-    details: Optional[dict] = None,
+    message: str | None = None,
+    details: dict | None = None,
 ) -> str:
     finding_id = f"fin_{uuid.uuid4().hex[:12]}"
     conn = await get_connection()
@@ -239,7 +239,7 @@ async def insert_finding(
     return finding_id
 
 
-async def get_run(run_id: str) -> Optional[dict]:
+async def get_run(run_id: str) -> dict | None:
     conn = await get_connection()
     try:
         row = await conn.fetchrow("SELECT * FROM runs WHERE id = ?", (run_id,))
@@ -259,7 +259,7 @@ async def get_run(run_id: str) -> Optional[dict]:
     }
 
 
-async def get_actions_for_run(run_id: str) -> List[dict]:
+async def get_actions_for_run(run_id: str) -> list[dict]:
     conn = await get_connection()
     try:
         rows = await conn.fetch("SELECT * FROM actions WHERE run_id = ? ORDER BY executed_at", (run_id,))
@@ -279,7 +279,7 @@ async def get_actions_for_run(run_id: str) -> List[dict]:
     ]
 
 
-async def get_entity_map(run_id: str, conn: Optional[Any] = None) -> dict:
+async def get_entity_map(run_id: str, conn: Any | None = None) -> dict:
     """Return dict keyed by local_id: {entity_type, remote_id, ...}."""
     own_conn = conn is None
     if conn is None:
@@ -292,7 +292,7 @@ async def get_entity_map(run_id: str, conn: Optional[Any] = None) -> dict:
     finally:
         if own_conn:
             await conn.close()
-    def _state(r: dict) -> Optional[str]:
+    def _state(r: dict) -> str | None:
         v = r.get("state")
         if v is None:
             return None
@@ -310,7 +310,7 @@ async def get_entity_map(run_id: str, conn: Optional[Any] = None) -> dict:
     }
 
 
-async def get_findings(run_id: str) -> List[dict]:
+async def get_findings(run_id: str) -> list[dict]:
     conn = await get_connection()
     try:
         rows = await conn.fetch(
@@ -343,7 +343,7 @@ async def insert_webhook_deliveries_bulk(
     conn: Any,
     run_id: str,
     target_url: str,
-    deliveries: List[dict],
+    deliveries: list[dict],
 ) -> None:
     """Insert many webhook delivery rows in one or few round-trips."""
     if not deliveries:
@@ -351,8 +351,8 @@ async def insert_webhook_deliveries_bulk(
     BATCH = 300
     for i in range(0, len(deliveries), BATCH):
         chunk = deliveries[i : i + BATCH]
-        values: List[Any] = []
-        placeholders: List[str] = []
+        values: list[Any] = []
+        placeholders: list[str] = []
         for d in chunk:
             placeholders.append("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
             values.extend(
@@ -383,7 +383,7 @@ async def insert_webhook_deliveries_bulk(
         await conn.execute(query, tuple(values))
 
 
-async def get_webhook_payloads(run_id: str) -> List[dict]:
+async def get_webhook_payloads(run_id: str) -> list[dict]:
     """Fetch stored webhook payloads for replay."""
     conn = await get_connection()
     try:
@@ -407,7 +407,7 @@ async def get_webhook_payloads(run_id: str) -> List[dict]:
     return results
 
 
-async def get_webhook_deliveries(run_id: str) -> List[dict]:
+async def get_webhook_deliveries(run_id: str) -> list[dict]:
     conn = await get_connection()
     try:
         rows = await conn.fetch(

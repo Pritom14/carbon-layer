@@ -16,7 +16,7 @@ def _parse_actions(actions: list[Any]) -> list[ActionDef]:
             for action_type, params in item.items():
                 result.append(ActionDef(action_type=action_type, params=params or {}))
         else:
-            raise ValueError(f"Invalid action item: {item}")
+            raise TypeError(f"Invalid action item: {item}")
     return result
 
 

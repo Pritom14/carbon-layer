@@ -6,7 +6,6 @@ from carbon.adapters.razorpay.client import RazorpayClient
 class RazorpayAdapterError(Exception):
     """Raised when an operation is not supported by Razorpay API."""
 
-    pass
 
 
 class RazorpayAdapter:

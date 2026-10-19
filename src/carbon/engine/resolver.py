@@ -21,8 +21,7 @@ async def resolve_refs(run_id: str, for_each: str) -> list[str]:
     for local_id, info in entity_map.items():
         if info.get("entity_type") == entity_type:
             # For captured_payments/successful_payments only include captured ones
-            if "payment" in for_each and "captured" in for_each:
-                if info.get("state") != "captured":
-                    continue
+            if "payment" in for_each and "captured" in for_each and info.get("state") != "captured":
+                continue
             refs.append(local_id)
     return sorted(refs)

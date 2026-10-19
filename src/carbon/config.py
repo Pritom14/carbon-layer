@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,13 +14,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    razorpay_api_key: Optional[str] = None
-    razorpay_api_secret: Optional[str] = None
-    stripe_api_key: Optional[str] = None
-    cashfree_client_id: Optional[str] = None
-    cashfree_client_secret: Optional[str] = None
-    juspay_api_key: Optional[str] = None
-    juspay_merchant_id: Optional[str] = None
+    razorpay_api_key: str | None = None
+    razorpay_api_secret: str | None = None
+    stripe_api_key: str | None = None
+    cashfree_client_id: str | None = None
+    cashfree_client_secret: str | None = None
+    juspay_api_key: str | None = None
+    juspay_merchant_id: str | None = None
     carbon_scenarios_dir: Path = Path("scenarios")
 
     # SQLite (default, zero config) or PostgreSQL.

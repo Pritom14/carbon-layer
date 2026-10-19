@@ -4,9 +4,9 @@ from carbon.storage.db import init_db
 from carbon.storage.models import Action, EntityMapping, Finding, Run
 
 __all__ = [
-    "init_db",
-    "Run",
     "Action",
     "EntityMapping",
     "Finding",
+    "Run",
+    "init_db",
 ]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 from carbon.validator.validator import (
     _compute_metrics,
     _evaluate_condition,
@@ -61,7 +60,7 @@ class TestEvaluateExpected:
         assert "1000" in msg
 
     def test_string_predicate_gte(self):
-        passed, msg = _evaluate_expected(1000, ">= 1000")
+        passed, _msg = _evaluate_expected(1000, ">= 1000")
         assert passed is True
         passed, _ = _evaluate_expected(999, ">= 1000")
         assert passed is False

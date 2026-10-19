@@ -1,7 +1,7 @@
 """Juspay API client (async httpx). Uses HTTP Basic Auth with API key and empty password."""
 
 import base64
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -26,7 +26,7 @@ class JuspayClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def post_form(self, path: str, data: Optional[dict] = None) -> dict:
+    async def post_form(self, path: str, data: dict | None = None) -> dict:
         """POST with application/x-www-form-urlencoded (Orders, Refunds, Txns)."""
         r = await self._client.post(
             path,
@@ -36,7 +36,7 @@ class JuspayClient:
         r.raise_for_status()
         return r.json() if r.content else {}
 
-    async def post_json(self, path: str, json: Optional[dict] = None) -> dict:
+    async def post_json(self, path: str, json: dict | None = None) -> dict:
         """POST with application/json (Session API)."""
         r = await self._client.post(
             path,
@@ -46,7 +46,7 @@ class JuspayClient:
         r.raise_for_status()
         return r.json() if r.content else {}
 
-    async def get(self, path: str, params: Optional[dict] = None) -> Any:
+    async def get(self, path: str, params: dict | None = None) -> Any:
         r = await self._client.get(path, params=params or {})
         r.raise_for_status()
         return r.json() if r.content else {}
@@ -78,7 +78,7 @@ class JuspayClient:
         self,
         order_id: str,
         unique_request_id: str,
-        amount: Optional[float] = None,
+        amount: float | None = None,
     ) -> dict:
         data: dict[str, str] = {"unique_request_id": unique_request_id}
         if amount is not None:

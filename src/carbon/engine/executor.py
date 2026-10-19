@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 from carbon.adapters.base import PaymentAdapter
 from carbon.compiler.models import ExecutionPlan, Step
@@ -72,7 +72,7 @@ async def _run_step(
             n = min(int(step.params.get("count", 1)), len(payment_refs))
             refs = list(random.sample(payment_refs, n))
 
-    all_rows: List[dict] = []
+    all_rows: list[dict] = []
     if refs:
         # Run adapter calls in parallel (batched to avoid overwhelming)
         BATCH = 100
@@ -100,13 +100,13 @@ async def _execute_one(
     params: dict,
     ref: str | None,
     entity_map: dict,
-) -> List[dict] | None:
+) -> list[dict] | None:
     """Return entity row(s) to bulk insert, or None."""
     action_type = step.action_type
     if action_type == "create_orders":
         count = int(params.get("count", 1))
         amount_paise = int(params.get("amount_paise", 250000))
-        rows: List[dict] = []
+        rows: list[dict] = []
         for i in range(count):
             out = await adapter.create_order(
                 {"amount": amount_paise, "amount_paise": amount_paise, "receipt": f"carbon_{run_id}_{i}"}

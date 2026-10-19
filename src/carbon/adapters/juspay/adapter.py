@@ -8,7 +8,6 @@ from carbon.adapters.juspay.client import JuspayClient
 class JuspayAdapterError(Exception):
     """Raised when an operation is not supported by Juspay API."""
 
-    pass
 
 
 class JuspayAdapter:

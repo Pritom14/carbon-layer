@@ -11,7 +11,6 @@ from carbon.scenarios import load_scenario
 from carbon.storage.repo import create_run, get_entity_map, get_findings, get_run
 from carbon.validator import run_validations
 
-
 # Expected entity counts per scenario (min bounds; actual may vary slightly for probabilistic steps).
 SCENARIO_EXPECTATIONS = {
     "dispute-spike": {

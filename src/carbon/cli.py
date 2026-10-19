@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -53,25 +52,25 @@ def scenarios_list() -> None:
 def run(
     scenario_name: str = typer.Argument(..., help="Scenario name (e.g. dispute-spike)"),
     provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, cashfree, or juspay"),
-    api_key: Optional[str] = typer.Option(None, "--api-key", envvar="RAZORPAY_API_KEY"),
-    api_secret: Optional[str] = typer.Option(None, "--api-secret", envvar="RAZORPAY_API_SECRET"),
-    stripe_key: Optional[str] = typer.Option(None, "--stripe-key", envvar="STRIPE_API_KEY"),
-    cashfree_id: Optional[str] = typer.Option(None, "--cashfree-id", envvar="CASHFREE_CLIENT_ID"),
-    cashfree_secret: Optional[str] = typer.Option(None, "--cashfree-secret", envvar="CASHFREE_CLIENT_SECRET"),
-    juspay_key: Optional[str] = typer.Option(None, "--juspay-key", envvar="JUSPAY_API_KEY"),
-    juspay_merchant_id: Optional[str] = typer.Option(None, "--juspay-merchant-id", envvar="JUSPAY_MERCHANT_ID"),
-    webhook_url: Optional[str] = typer.Option(
+    api_key: str | None = typer.Option(None, "--api-key", envvar="RAZORPAY_API_KEY"),
+    api_secret: str | None = typer.Option(None, "--api-secret", envvar="RAZORPAY_API_SECRET"),
+    stripe_key: str | None = typer.Option(None, "--stripe-key", envvar="STRIPE_API_KEY"),
+    cashfree_id: str | None = typer.Option(None, "--cashfree-id", envvar="CASHFREE_CLIENT_ID"),
+    cashfree_secret: str | None = typer.Option(None, "--cashfree-secret", envvar="CASHFREE_CLIENT_SECRET"),
+    juspay_key: str | None = typer.Option(None, "--juspay-key", envvar="JUSPAY_API_KEY"),
+    juspay_merchant_id: str | None = typer.Option(None, "--juspay-merchant-id", envvar="JUSPAY_MERCHANT_ID"),
+    webhook_url: str | None = typer.Option(
         None, "--webhook-url", help="POST webhook events to this URL after the run"
     ),
-    webhook_secret: Optional[str] = typer.Option(
+    webhook_secret: str | None = typer.Option(
         None,
         "--webhook-secret",
         help="Secret used to sign webhook payloads (HMAC-SHA256)",
     ),
-    set_params: Optional[list[str]] = typer.Option(
+    set_params: list[str] | None = typer.Option(
         None, "--set", help="Override scenario parameters. Format: key=value. Can be used multiple times."
     ),
-    callback_url: Optional[str] = typer.Option(
+    callback_url: str | None = typer.Option(
         None, "--callback-url", help="POST run summary JSON to this URL after completion (for CI/CD integration)"
     ),
     ci: bool = typer.Option(False, "--ci", help="Exit with code 1 if any webhook returned 5xx or timed out"),
@@ -153,6 +152,7 @@ def run(
 
     if output == "json":
         import json as _json
+
         from carbon.storage.repo import get_findings, get_run, get_webhook_deliveries
         run_data = asyncio.run(get_run(run_id))
         findings = asyncio.run(get_findings(run_id))
@@ -202,9 +202,9 @@ async def _do_run(
     scenario_name: str,
     provider: str,
     adapter,
-    webhook_url: Optional[str],
-    webhook_secret: Optional[str],
-    callback_url: Optional[str] = None,
+    webhook_url: str | None,
+    webhook_secret: str | None,
+    callback_url: str | None = None,
     webhook_repeat: int = 1,
     webhook_order: str = "sequence",
     webhook_signature: str = "valid",
@@ -230,9 +230,9 @@ async def _do_run(
                 console.print(f"[dim]Callback delivered: {result['status_code']}[/dim]")
             else:
                 console.print(f"[yellow]Callback failed: {result.get('error') or result.get('status_code')}[/yellow]")
-    except Exception as e:
+    except Exception:
         await update_run_status(run_id, "failed")
-        raise e
+        raise
     return run_id
 
 
@@ -241,7 +241,7 @@ def replay(
     run_id: str = typer.Argument(..., help="Run ID to replay webhooks from"),
     webhook_url: str = typer.Option(..., "--webhook-url", help="Target URL to replay webhooks to"),
     provider: str = typer.Option("mock", "--provider", "-p", help="Provider for signing"),
-    webhook_secret: Optional[str] = typer.Option(None, "--webhook-secret", help="Secret for signing"),
+    webhook_secret: str | None = typer.Option(None, "--webhook-secret", help="Secret for signing"),
 ) -> None:
     """Replay webhook payloads from a previous run."""
     async def _replay() -> list:
