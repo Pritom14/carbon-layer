@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 from carbon.config import get_settings
 
