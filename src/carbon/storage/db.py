@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Self
+from typing import Any
 
 from carbon.config import get_settings
 
@@ -132,7 +132,7 @@ class _SQLiteConnection:
     async def close(self) -> None:
         await self._conn.close()
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> _SQLiteConnection:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -169,7 +169,7 @@ class _PostgresConnection:
     async def close(self) -> None:
         await self._conn.close()
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> _PostgresConnection:
         return self
 
     async def __aexit__(self, *args: object) -> None:
