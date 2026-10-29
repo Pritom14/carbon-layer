@@ -302,6 +302,97 @@ def _build_juspay_payload(
 
 
 # ---------------------------------------------------------------------------
+# Hyperswitch (Juspay's open-source payments orchestrator) — outgoing webhooks
+# Envelope per crates/api_models/src/webhooks.rs::OutgoingWebhook; event types are
+# snake_case common_enums::EventType values.
+# ---------------------------------------------------------------------------
+
+HYPERSWITCH_ENTITY_STATE_TO_EVENT: dict[tuple[str, str], str] = {
+    ("payment", "authorized"): "payment_authorized",
+    ("payment", "captured"): "payment_succeeded",
+    ("payment", "failed"): "payment_failed",
+    ("dispute", "open"): "dispute_opened",
+    ("refund", "processed"): "refund_succeeded",
+    ("refund", "failed"): "refund_failed",
+}
+
+_HYPERSWITCH_PAYMENT_STATUS = {
+    "payment_authorized": "requires_capture",
+    "payment_succeeded": "succeeded",
+    "payment_failed": "failed",
+}
+
+
+def _build_hyperswitch_payload(
+    *,
+    event_type: str,
+    entity_type: str,
+    remote_id: str,
+    metadata: dict | None,
+    account_id: str,
+) -> dict[str, Any]:
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    obj = dict(metadata or {})
+    amount = int(obj.get("amount", obj.get("amount_paise", 10000)) or 10000)
+    currency = obj.get("currency", "INR")
+    payment_id = obj.get("payment_id") or (remote_id if entity_type == "payment" else None)
+    payment_id = payment_id or f"pay_{uuid.uuid4().hex[:20]}"
+
+    if entity_type == "refund":
+        content_type = "refund_details"
+        content = {
+            "refund_id": remote_id or f"ref_{uuid.uuid4().hex[:20]}",
+            "payment_id": payment_id,
+            "amount": amount,
+            "currency": currency,
+            "status": "succeeded" if event_type == "refund_succeeded" else "failed",
+            "reason": obj.get("reason"),
+            "created_at": now,
+        }
+    elif entity_type == "dispute":
+        content_type = "dispute_details"
+        content = {
+            "dispute_id": remote_id or f"dp_{uuid.uuid4().hex[:20]}",
+            "payment_id": payment_id,
+            "attempt_id": f"{payment_id}_1",
+            "amount": str(amount),
+            "currency": currency,
+            "dispute_stage": "dispute",
+            "dispute_status": "dispute_opened",
+            "connector": "carbon_mock",
+            "connector_status": "needs_response",
+            "connector_dispute_id": f"cdp_{uuid.uuid4().hex[:16]}",
+            "created_at": now,
+        }
+    else:
+        content_type = "payment_details"
+        status = _HYPERSWITCH_PAYMENT_STATUS.get(event_type, "processing")
+        content = {
+            "payment_id": payment_id,
+            "merchant_id": account_id,
+            "status": status,
+            "amount": amount,
+            "net_amount": amount,
+            "amount_capturable": amount if status == "requires_capture" else 0,
+            "amount_received": amount if status == "succeeded" else None,
+            "currency": currency,
+            "connector": "carbon_mock",
+            "created": now,
+        }
+
+    return {
+        "merchant_id": account_id,
+        "event_id": f"evt_{uuid.uuid4().hex[:26]}",
+        "event_type": event_type,
+        "content": {"type": content_type, "object": content},
+        "timestamp": now,
+        "processor_merchant_id": None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Provider dispatch
 # ---------------------------------------------------------------------------
 
@@ -310,6 +401,7 @@ _EVENT_MAPS: dict[str, dict[tuple[str, str], str]] = {
     "stripe": STRIPE_ENTITY_STATE_TO_EVENT,
     "cashfree": CASHFREE_ENTITY_STATE_TO_EVENT,
     "juspay": JUSPAY_ENTITY_STATE_TO_EVENT,
+    "hyperswitch": HYPERSWITCH_ENTITY_STATE_TO_EVENT,
 }
 
 _PAYLOAD_BUILDERS = {
@@ -317,6 +409,7 @@ _PAYLOAD_BUILDERS = {
     "stripe": _build_stripe_payload,
     "cashfree": _build_cashfree_payload,
     "juspay": _build_juspay_payload,
+    "hyperswitch": _build_hyperswitch_payload,
 }
 
 # Backward-compat alias

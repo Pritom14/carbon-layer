@@ -53,7 +53,7 @@ def scenarios_list() -> None:
 @app.command()
 def run(
     scenario_name: str = typer.Argument(..., help="Scenario name (e.g. dispute-spike)"),
-    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, cashfree, or juspay"),
+    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, cashfree, juspay, or hyperswitch"),
     api_key: Optional[str] = typer.Option(None, "--api-key", envvar="RAZORPAY_API_KEY"),
     api_secret: Optional[str] = typer.Option(None, "--api-secret", envvar="RAZORPAY_API_SECRET"),
     stripe_key: Optional[str] = typer.Option(None, "--stripe-key", envvar="STRIPE_API_KEY"),
@@ -95,7 +95,13 @@ def run(
     settings = get_settings()
     # Webhook format/signing follows the requested provider even when the adapter
     # falls back to mock for lack of gateway credentials.
-    webhook_provider = provider if provider in ("razorpay", "stripe", "cashfree", "juspay") else "razorpay"
+    webhook_provider = (
+        provider if provider in ("razorpay", "stripe", "cashfree", "juspay", "hyperswitch") else "razorpay"
+    )
+    if provider == "hyperswitch":
+        # Hyperswitch sends merchants its own webhooks; the payment flow itself is simulated.
+        console.print("[dim]Hyperswitch: simulating payments locally, sending Hyperswitch-format webhooks.[/dim]")
+        provider = "mock"
 
     # Resolve credentials per provider
     if provider == "razorpay" and not (api_key and api_secret):

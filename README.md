@@ -273,6 +273,7 @@ Carbon Layer generates provider-specific webhook payloads with correct signing f
 | Stripe | `Stripe-Signature: t=...,v1=...` | HMAC-SHA256 | `--provider stripe` |
 | Cashfree | `x-webhook-signature` | Base64(HMAC-SHA256) | `--provider cashfree` |
 | Juspay | `Authorization: Basic ...` | Basic Auth | `--provider juspay` |
+| Hyperswitch | `X-Webhook-Signature-512` | HMAC-SHA512 | `--provider hyperswitch` |
 
 ### Razorpay
 
@@ -320,6 +321,20 @@ carbon run dispute-spike \
 ```
 
 Or set `JUSPAY_API_KEY` and `JUSPAY_MERCHANT_ID` as environment variables.
+
+### Hyperswitch
+
+Testing a merchant integration with [Hyperswitch](https://github.com/juspay/hyperswitch) (Juspay's open-source payments orchestrator)? Carbon Layer sends Hyperswitch-format outgoing webhooks (`payment_succeeded`, `payment_failed`, `refund_succeeded`, `dispute_opened`, …) with the `{event_id, event_type, content: {type, object}}` envelope, signed with your **payment response hash key** exactly like Hyperswitch does (hex HMAC-SHA512 of the raw body in `X-Webhook-Signature-512`):
+
+```bash
+carbon run refund-storm --provider hyperswitch \
+  --webhook-url http://localhost:8000/webhooks/hyperswitch \
+  --webhook-secret $PAYMENT_RESPONSE_HASH_KEY \
+  --webhook-repeat 2 --webhook-order random \
+  --verify-cmd "psql -tAc 'select count(*) from fulfilments'" --verify-event payment_succeeded
+```
+
+No Hyperswitch deployment needed — the payment flow is simulated locally. Repeats of an event share the same `event_id`, so this also tests your dedupe.
 
 ### Mock (no credentials needed)
 
