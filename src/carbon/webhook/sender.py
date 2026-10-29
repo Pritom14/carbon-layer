@@ -66,11 +66,21 @@ def _sign_juspay(body: bytes, secret: str) -> dict[str, str]:
     }
 
 
+def _sign_hyperswitch(body: bytes, secret: str) -> dict[str, str]:
+    """Hyperswitch signing: hex HMAC-SHA512 of the raw body with the payment response hash key."""
+    signature = hmac.new(secret.encode("utf-8"), body, hashlib.sha512).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "X-Webhook-Signature-512": signature,
+    }
+
+
 _SIGNERS = {
     "razorpay": _sign_razorpay,
     "stripe": _sign_stripe,
     "cashfree": _sign_cashfree,
     "juspay": _sign_juspay,
+    "hyperswitch": _sign_hyperswitch,
 }
 
 
