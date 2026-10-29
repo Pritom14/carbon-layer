@@ -6,6 +6,9 @@ import re
 from typing import Any
 
 from carbon.scenarios.models import Scenario
+import dataclasses
+
+from carbon.compiler.compiler import render_expected
 from carbon.scenarios.registry import load_scenario
 from carbon.storage.repo import get_entity_map, get_run, insert_finding
 
@@ -138,7 +141,10 @@ async def run_validations(run_id: str) -> None:
         pass
 
     if scenario and (scenario.validations or scenario.findings):
+        parameters = dict(scenario.parameters)
+        parameters.update(run.get("parameters") or {})
         for v in scenario.validations:
+            v = dataclasses.replace(v, expected=render_expected(v.expected, parameters))
             check = (v.check or "").strip()
             if check not in metrics:
                 await insert_finding(
@@ -177,7 +183,8 @@ async def run_validations(run_id: str) -> None:
                     message,
                     {"condition": condition},
                 )
-        await _insert_default_findings(run_id, entity_map, severity="low")
+        # Scenario validations decide pass/fail; default counts are informational
+        await _insert_default_findings(run_id, entity_map, severity="low", informational=True)
     else:
         await _insert_default_findings(run_id, entity_map, severity_orders="high", severity_rest="medium")
 
@@ -188,6 +195,7 @@ async def _insert_default_findings(
     severity: str | None = None,
     severity_orders: str | None = None,
     severity_rest: str | None = None,
+    informational: bool = False,
 ) -> None:
     """Insert the four default count findings."""
     sev_ord = severity or severity_orders or "high"
@@ -200,11 +208,11 @@ async def _insert_default_findings(
     disputes = [k for k, v in entity_map.items() if v.get("entity_type") == "dispute"]
     refunds = [k for k, v in entity_map.items() if v.get("entity_type") == "refund"]
     await insert_finding(
-        run_id, "orders_created", sev_ord, len(orders) > 0,
+        run_id, "orders_created", sev_ord, informational or len(orders) > 0,
         f"Orders created: {len(orders)}", {"count": len(orders)},
     )
     await insert_finding(
-        run_id, "payments_captured", sev_ord, len(captured) > 0,
+        run_id, "payments_captured", sev_ord, informational or len(captured) > 0,
         f"Payments captured: {len(captured)}", {"count": len(captured)},
     )
     await insert_finding(

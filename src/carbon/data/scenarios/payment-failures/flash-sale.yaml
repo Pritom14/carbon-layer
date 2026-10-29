@@ -20,8 +20,8 @@ phases:
     description: Create high volume of orders and capture payments
     actions:
       - create_orders:
-          count: 5000
-          amount_paise: 250000
+          count: "${baseline_orders}"
+          amount_paise: "${avg_order_value_paise}"
       - create_payments:
           for_each: orders
           success_rate: 1.0
@@ -31,11 +31,11 @@ phases:
 validations:
   - check: orders_count
     description: Flash sale volume
-    expected: ">= 5000"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: payments_captured_count
     description: All payments captured
-    expected: ">= 5000"
+    expected: ">= ${baseline_orders}"
     severity: high
 
 findings:

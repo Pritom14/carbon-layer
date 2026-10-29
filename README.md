@@ -11,6 +11,25 @@ Every company processing payments tests the happy path — payment succeeds, ord
 
 Carbon Layer lets you simulate these failure modes against your own integration before your customers encounter them. Run a scenario, point it at your webhook endpoint, and see exactly what your system handles and what it doesn't.
 
+### Does your handler credit a payment twice?
+
+Razorpay, Stripe and Cashfree all deliver webhooks *at least once*, so the same `payment.captured` can arrive more than once. A handler that doesn't dedupe returns `200` every time — so status codes alone will never show the bug. Carbon Layer checks the side effect itself:
+
+```bash
+carbon run dispute-spike --provider razorpay \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --webhook-repeat 3 --webhook-order random \
+  --verify-cmd "psql -tAc 'select count(*) from wallet_credits'" --ci
+```
+
+```
+Side-effect verification (payment.captured)
+  deliveries sent: 3000   unique events acked: 1000   counter: 0 -> 3000 (change 3000)
+  FAIL: duplicate processing: payment.captured: 1000 unique events caused 3000 side effects; handler is not idempotent
+```
+
+No gateway account needed — webhooks are generated locally and signed exactly like the real provider's (including Razorpay's `X-Razorpay-Event-Id`, the key you should dedupe on).
+
 ---
 
 ## Installation
@@ -119,7 +138,7 @@ Override scenario parameters at runtime without editing YAML:
 carbon run dispute-spike --provider mock --set baseline_orders=500 --set dispute_rate=0.3
 ```
 
-Use `--set` multiple times for multiple parameters. Unknown keys are ignored with a warning.
+Use `--set` multiple times for multiple parameters. Unknown keys are ignored with a warning. Entity counts, rates and validation thresholds all follow the parameters (e.g. `dispute-spike` creates `baseline_orders * dispute_rate` disputes).
 
 ---
 
@@ -146,6 +165,26 @@ Fire each webhook multiple times to test whether your handler processes duplicat
 ```bash
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-repeat 5
 ```
+
+Every repeat of an event carries the same event id (`X-Razorpay-Event-Id` for Razorpay; the payload `id` for Stripe/Juspay), just like a real provider retry.
+
+A non-idempotent handler still answers `200`, so add `--verify-cmd` to check the actual side effect. It takes any shell command that prints a number — a SQL count, a `curl` to an internal stats endpoint, a Redis `GET`:
+
+```bash
+carbon run dispute-spike --provider razorpay --webhook-url http://localhost:8000/webhooks \
+  --webhook-repeat 5 --verify-cmd "psql -tAc 'select count(*) from wallet_credits'" \
+  --verify-event payment.captured
+```
+
+Carbon Layer runs the command before and after delivery and compares the change with the number of unique events your endpoint acknowledged (2xx):
+
+| Result | Meaning |
+|---|---|
+| `PASS` | each event processed exactly once |
+| `FAIL: duplicate processing` | retries were processed as new events (double credit / double fulfilment) |
+| `FAIL: lost events` | events were acknowledged with 2xx but never processed |
+
+With `--ci`, a failed verification exits with code 1. The command runs right after the last delivery, so if your handler processes events asynchronously (queue/worker), point it at something that reflects completed work or add a wait (`sleep 5 && psql ...`).
 
 ### Out-of-order delivery
 

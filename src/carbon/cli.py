@@ -19,6 +19,7 @@ from carbon.scenarios import list_scenarios, load_scenario
 from carbon.storage.repo import create_run, ensure_db, update_run_status
 from carbon.validator import run_validations
 from carbon.webhook import replay_webhooks, send_webhooks
+from carbon.webhook.verify import VerifyError, evaluate, read_counter
 
 app = typer.Typer(name="carbon", help="Chaos engineering for payment flows.")
 console = Console()
@@ -79,9 +80,22 @@ def run(
     webhook_order: str = typer.Option("sequence", "--webhook-order", help="Webhook delivery order: sequence, reverse, or random"),
     webhook_signature: str = typer.Option("valid", "--webhook-signature", help="Signature mode: valid, missing, corrupted, or wrong_secret"),
     output: str = typer.Option("terminal", "--output", help="Output format: terminal or json"),
+    verify_cmd: Optional[str] = typer.Option(
+        None,
+        "--verify-cmd",
+        help="Shell command printing a number that counts your handler's side effects "
+        "(e.g. a SQL count of wallet credits). Run before and after delivery to detect "
+        "duplicate or lost processing.",
+    ),
+    verify_event: str = typer.Option(
+        "payment.captured", "--verify-event", help="Event type whose side effect --verify-cmd counts"
+    ),
 ) -> None:
     """Run a scenario and print report."""
     settings = get_settings()
+    # Webhook format/signing follows the requested provider even when the adapter
+    # falls back to mock for lack of gateway credentials.
+    webhook_provider = provider if provider in ("razorpay", "stripe", "cashfree", "juspay") else "razorpay"
 
     # Resolve credentials per provider
     if provider == "razorpay" and not (api_key and api_secret):
@@ -146,10 +160,18 @@ def run(
                 overrides[key.strip()] = raw_value
     plan = compile_scenario(scenario, overrides=overrides or None)
     adapter = get_adapter(provider, api_key=effective_key, api_secret=api_secret)
-    run_id = asyncio.run(_do_run(
-        plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
-        webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
-    ))
+    if verify_cmd and not webhook_url:
+        console.print("[red]--verify-cmd requires --webhook-url[/red]")
+        raise typer.Exit(2)
+    try:
+        run_id, verification = asyncio.run(_do_run(
+            plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
+            webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
+            webhook_provider=webhook_provider, verify_cmd=verify_cmd, verify_event=verify_event,
+        ))
+    except VerifyError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2)
 
     if output == "json":
         import json as _json
@@ -177,12 +199,21 @@ def run(
                 "failed_5xx": sum(1 for d in deliveries if isinstance(d.get("status_code"), int) and d["status_code"] >= 500),
                 "timeout": sum(1 for d in deliveries if d.get("status_code") is None),
             },
-            "passed": all(f["passed"] for f in findings),
+            "verification": verification,
+            "passed": all(f["passed"] for f in findings)
+            and (verification is None or verification["passed"]),
         }
         print(_json.dumps(result, indent=2, default=str))
     else:
         console.print(f"\n[green]Run completed: {run_id}[/green]")
         asyncio.run(print_report(run_id))
+        if verification:
+            _print_verification(verification)
+
+    if ci and verification and not verification["passed"]:
+        if output != "json":
+            console.print("[red]CI check failed: side-effect verification did not pass.[/red]")
+        raise typer.Exit(1)
 
     if ci and webhook_url:
         from carbon.storage.repo import get_webhook_deliveries as _get_wh
@@ -208,21 +239,29 @@ async def _do_run(
     webhook_repeat: int = 1,
     webhook_order: str = "sequence",
     webhook_signature: str = "valid",
-) -> str:
+    webhook_provider: str = "razorpay",
+    verify_cmd: Optional[str] = None,
+    verify_event: str = "payment.captured",
+) -> tuple[str, Optional[dict]]:
     await ensure_db()
     run_id = await create_run(scenario_name, provider, plan.parameters)
+    verification = None
     try:
         await run_plan(plan, run_id, provider, adapter)
         if webhook_url:
-            await send_webhooks(
+            before = read_counter(verify_cmd) if verify_cmd else None
+            deliveries = await send_webhooks(
                 run_id,
                 target_url=webhook_url,
                 secret=webhook_secret or "carbon",
-                provider=provider,
+                provider=webhook_provider,
                 repeat=webhook_repeat,
                 order=webhook_order,
                 signature_mode=webhook_signature,
             )
+            if verify_cmd:
+                after = read_counter(verify_cmd)
+                verification = evaluate(before, after, deliveries, verify_event)
         await run_validations(run_id)
         if callback_url:
             result = await post_run_callback(run_id, callback_url)
@@ -233,7 +272,18 @@ async def _do_run(
     except Exception as e:
         await update_run_status(run_id, "failed")
         raise e
-    return run_id
+    return run_id, verification
+
+
+def _print_verification(v: dict) -> None:
+    color = "green" if v["passed"] else "red"
+    label = {"pass": "PASS", "duplicates": "FAIL: duplicate processing", "lost": "FAIL: lost events"}[v["verdict"]]
+    console.print(f"\n[bold]Side-effect verification[/bold] ({v['event_type']})")
+    console.print(
+        f"  deliveries sent: {v['deliveries']}   unique events acked: {v['unique_events_acked']}   "
+        f"counter: {v['before']:g} -> {v['after']:g} (change {v['observed_change']:g})"
+    )
+    console.print(f"  [{color}]{label}[/{color}]: {v['message']}")
 
 
 @app.command()

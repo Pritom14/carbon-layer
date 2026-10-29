@@ -22,16 +22,18 @@ phases:
     description: Create orders and attempt payments with some invalid VPAs
     actions:
       - create_orders:
-          count: 50
-          amount_paise: 25000
+          count: "${baseline_orders}"
+          amount_paise: "${avg_order_value_paise}"
       - create_payments:
           for_each: orders
-          success_rate: 0.6
+          success_rate: "${1 - failure_rate}"
+      - capture_payments:
+          for_each: successful_payments
 
 validations:
   - check: orders_count
     description: Baseline orders created
-    expected: ">= 50"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: payment_success_rate
     description: Should reflect VPA failures

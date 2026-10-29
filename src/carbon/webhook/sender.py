@@ -96,6 +96,9 @@ async def _post_one(
             body = json.dumps(event["payload"], separators=(",", ":"), sort_keys=True).encode("utf-8")
             signer = _SIGNERS.get(provider, _sign_razorpay)
             headers = signer(body, secret)
+            if provider == "razorpay" and event.get("provider_event_id"):
+                # Razorpay's documented dedupe key; identical across retries of one event
+                headers["X-Razorpay-Event-Id"] = event["provider_event_id"]
             headers = _apply_signature_mode(headers, signature_mode)
             resp = await client.post(target_url, content=body, headers=headers, timeout=timeout_s)
             status_code = resp.status_code
@@ -118,8 +121,12 @@ async def _post_one(
             "response_body": response_body,
             "sent_at": sent_at,
             "attempt": event.get("attempt"),
+            "provider_event_id": event.get("provider_event_id"),
             "payload": json.dumps(event["payload"], separators=(",", ":"), sort_keys=True),
         }
+
+
+_NON_SIGNATURE_HEADERS = ("content-type", "x-razorpay-event-id")
 
 
 def _apply_signature_mode(headers: dict[str, str], mode: str) -> dict[str, str]:
@@ -128,14 +135,14 @@ def _apply_signature_mode(headers: dict[str, str], mode: str) -> dict[str, str]:
         return headers
     if mode == "missing":
         # Remove all signature-related headers
-        sig_keys = [k for k in headers if k.lower() not in ("content-type",)]
+        sig_keys = [k for k in headers if k.lower() not in _NON_SIGNATURE_HEADERS]
         for k in sig_keys:
             headers.pop(k, None)
         return headers
     if mode == "corrupted":
         # Corrupt signature values by appending garbage
         for k in list(headers):
-            if k.lower() != "content-type":
+            if k.lower() not in _NON_SIGNATURE_HEADERS:
                 headers[k] = headers[k] + "CORRUPTED"
         return headers
     if mode == "wrong_secret":
@@ -172,6 +179,10 @@ async def send_webhooks(
         events = build_events_from_entity_map(entity_map, account_id=account_id, provider=provider)
         if not events:
             return []
+
+        # One stable provider event id per logical event, shared by its repeats
+        for e in events:
+            e.setdefault("provider_event_id", f"evt_{uuid.uuid4().hex[:14]}")
 
         # Duplicate: repeat each event N times
         if repeat > 1:

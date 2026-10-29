@@ -72,6 +72,12 @@ async def _run_step(
             n = min(int(step.params.get("count", 1)), len(payment_refs))
             refs = list(random.sample(payment_refs, n))
 
+    if step.action_type == "create_payments" and refs:
+        # Exact success count (random which ones) so rate-based validations aren't flaky
+        rate = float(params.get("success_rate", 1.0))
+        n_success = max(0, min(len(refs), int(round(len(refs) * rate))))
+        params["_success_refs"] = set(random.sample(refs, n_success))
+
     all_rows: List[dict] = []
     if refs:
         # Run adapter calls in parallel (batched to avoid overwhelming)
@@ -116,8 +122,10 @@ async def _execute_one(
 
     if action_type == "create_payments" and ref:
         order_remote_id = entity_map.get(ref, {}).get("remote_id") or ref
-        success_rate = float(params.get("success_rate", 1.0))
-        success = random.random() < success_rate
+        if "_success_refs" in params:
+            success = ref in params["_success_refs"]
+        else:
+            success = random.random() < float(params.get("success_rate", 1.0))
         out = await adapter.create_payment(order_remote_id, {"success": success})
         return [_entity_row(f"payment_{ref}", "payment", out.get("id", ""), out.get("status", "authorized"), out)]
 
