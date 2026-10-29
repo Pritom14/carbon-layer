@@ -24,8 +24,8 @@ ruff check src/ tests/
 
 ## Adding a new scenario
 
-1. Create a YAML file under `scenarios/<category>/your-scenario.yaml`
-2. Follow the structure of existing scenarios (see `scenarios/disputes/dispute-spike.yaml`)
+1. Create a YAML file under `src/carbon/data/scenarios/<category>/your-scenario.yaml`
+2. Follow the structure of existing scenarios (see `src/carbon/data/scenarios/disputes/dispute-spike.yaml`)
 3. Define parameters, phases, validations, and findings
 4. Run `carbon scenarios-list` to verify it appears
 5. Add a compile test in `tests/test_webhook.py`

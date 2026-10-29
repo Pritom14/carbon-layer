@@ -23,8 +23,8 @@ phases:
     description: Create orders, payments, capture
     actions:
       - create_orders:
-          count: 1000
-          amount_paise: 250000
+          count: "${baseline_orders}"
+          amount_paise: "${avg_order_value_paise}"
       - create_payments:
           for_each: orders
           success_rate: 1.0
@@ -36,22 +36,22 @@ phases:
     depends_on: baseline
     actions:
       - create_disputes:
-          count: 150
+          count: "${baseline_orders * dispute_rate}"
           "on": captured_payments
           sample: random
 
 validations:
   - check: orders_count
     description: Baseline orders created
-    expected: ">= 1000"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: payments_captured_count
     description: All orders should have captured payment
-    expected: ">= 1000"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: disputes_count
     description: Dispute spike size
-    expected: ">= 150"
+    expected: ">= ${baseline_orders * dispute_rate}"
     severity: high
 
 findings:

@@ -23,22 +23,22 @@ phases:
     description: Create orders, payments (with failure rate), capture successful only
     actions:
       - create_orders:
-          count: 2000
-          amount_paise: 250000
+          count: "${baseline_orders}"
+          amount_paise: "${avg_order_value_paise}"
       - create_payments:
           for_each: orders
-          success_rate: 0.7
+          success_rate: "${success_rate}"
       - capture_payments:
           for_each: successful_payments
 
 validations:
   - check: orders_count
     description: Orders created
-    expected: ">= 2000"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: payments_captured_count
     description: Successful captures (70% of attempts)
-    expected: ">= 1200"
+    expected: ">= ${baseline_orders * (success_rate - 0.1)}"
     severity: high
   - check: payment_success_rate
     description: Success rate should be around 0.7

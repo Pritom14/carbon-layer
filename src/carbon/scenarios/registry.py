@@ -9,6 +9,9 @@ from carbon.scenarios.models import Scenario
 from carbon.scenarios.parser import parse_scenario
 
 
+BUILTIN_SCENARIOS_DIR = Path(__file__).resolve().parent.parent / "data" / "scenarios"
+
+
 def _scenarios_dir() -> Path:
     return get_settings().carbon_scenarios_dir
 
@@ -34,9 +37,7 @@ def list_scenarios() -> list[str]:
             continue
     # If no dir or empty, fallback to built-in path relative to repo
     if not names:
-        base = Path(__file__).resolve().parent.parent.parent
-        builtin = base / "scenarios"
-        for path in _find_yaml_files(builtin):
+        for path in _find_yaml_files(BUILTIN_SCENARIOS_DIR):
             try:
                 content = path.read_text()
                 scenario = parse_scenario(content)
@@ -51,7 +52,7 @@ def list_scenarios() -> list[str]:
 def load_scenario(name: str) -> tuple[Path | None, Scenario]:
     """Load scenario by name. Returns (path, Scenario) or raises LookupError."""
 
-    for dir_path in [_scenarios_dir(), Path(__file__).resolve().parent.parent.parent / "scenarios"]:
+    for dir_path in [_scenarios_dir(), BUILTIN_SCENARIOS_DIR]:
         for path in _find_yaml_files(dir_path):
             try:
                 content = path.read_text()

@@ -23,8 +23,8 @@ phases:
     description: Create orders, payments, and capture
     actions:
       - create_orders:
-          count: 200
-          amount_paise: 150000
+          count: "${baseline_orders}"
+          amount_paise: "${avg_order_value_paise}"
       - create_payments:
           for_each: orders
           success_rate: 1.0
@@ -36,22 +36,22 @@ phases:
     depends_on: baseline
     actions:
       - create_refunds:
-          count: 20
+          count: "${baseline_orders * refund_rate}"
           "on": captured_payments
           sample: random
 
 validations:
   - check: orders_count
     description: Baseline orders created
-    expected: ">= 200"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: payments_captured_count
     description: All payments should be captured
-    expected: ">= 200"
+    expected: ">= ${baseline_orders}"
     severity: high
   - check: refunds_count
     description: Refunds during settlement delay
-    expected: ">= 20"
+    expected: ">= ${baseline_orders * refund_rate}"
     severity: high
 
 findings:
