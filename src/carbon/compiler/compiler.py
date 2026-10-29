@@ -61,7 +61,11 @@ def render_expected(expected: Any, parameters: dict[str, Any]) -> Any:
 
     def sub(m: re.Match) -> str:
         val = _eval_expr(m.group(1), parameters)
-        return str(int(round(val))) if isinstance(val, float) and val.is_integer() else str(val)
+        # Values >= 1 are entity counts: round exactly like `count:` so a threshold
+        # never exceeds the number of entities the scenario creates. Rates stay as-is.
+        if isinstance(val, float) and (val >= 1 or val.is_integer()):
+            return str(int(round(val)))
+        return str(val)
 
     return _INLINE_REF.sub(sub, expected)
 

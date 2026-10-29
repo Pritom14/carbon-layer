@@ -106,6 +106,11 @@ class TestParameterReferences:
         assert render_expected(">= ${baseline_orders * dispute_rate}", {"baseline_orders": 1000, "dispute_rate": 0.15}) == ">= 150"
         assert render_expected("< 0.8", {}) == "< 0.8"
 
+    def test_threshold_rounds_like_count(self):
+        params = {"baseline_orders": 49, "dispute_rate": 0.15}
+        assert render_expected(">= ${baseline_orders * dispute_rate}", params) == ">= 7"
+        assert render_expected(">= ${success_rate - 0.1}", {"success_rate": 0.75}) == ">= 0.65"
+
     def test_unknown_reference_rejected(self):
         with pytest.raises(ValueError):
             render_expected(">= ${nope}", {})
