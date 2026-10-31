@@ -26,9 +26,9 @@ def _sign_razorpay(body: bytes, secret: str) -> dict[str, str]:
     }
 
 
-def _sign_stripe(body: bytes, secret: str) -> dict[str, str]:
+def _sign_stripe(body: bytes, secret: str, timestamp: str | None = None) -> dict[str, str]:
     """Stripe signing: t=timestamp,v1=HMAC-SHA256(secret, timestamp.body)."""
-    timestamp = str(int(time.time()))
+    timestamp = timestamp or str(int(time.time()))
     signed_payload = f"{timestamp}.".encode("utf-8") + body
     signature = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
     return {
@@ -37,11 +37,11 @@ def _sign_stripe(body: bytes, secret: str) -> dict[str, str]:
     }
 
 
-def _sign_cashfree(body: bytes, secret: str) -> dict[str, str]:
+def _sign_cashfree(body: bytes, secret: str, timestamp: str | None = None) -> dict[str, str]:
     """Cashfree signing: Base64(HMAC-SHA256(timestamp + body, secret))."""
     import base64
 
-    timestamp = str(int(time.time() * 1000))  # milliseconds
+    timestamp = timestamp or str(int(time.time() * 1000))  # milliseconds
     signed_payload = timestamp.encode("utf-8") + body
     signature = base64.b64encode(
         hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).digest()
@@ -82,6 +82,17 @@ _SIGNERS = {
     "juspay": _sign_juspay,
     "hyperswitch": _sign_hyperswitch,
 }
+
+# Providers whose signature covers a timestamp, and that timestamp's unit
+TIMESTAMPED_PROVIDERS = {"stripe": "s", "cashfree": "ms"}
+
+
+def sign(provider: str, body: bytes, secret: str, timestamp: str | None = None) -> dict[str, str]:
+    """Headers for body signed like provider would; timestamp overrides "now" where signed."""
+    signer = _SIGNERS.get(provider, _sign_razorpay)
+    if provider in TIMESTAMPED_PROVIDERS:
+        return signer(body, secret, timestamp)
+    return signer(body, secret)
 
 
 async def _post_one(

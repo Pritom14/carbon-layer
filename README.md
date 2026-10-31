@@ -243,6 +243,70 @@ If more than 90% of validly signed webhooks get 401/403, Carbon prints a hint th
 
 ---
 
+## Security checks
+
+`carbon security` attacks your webhook endpoint directly, with no scenario run, and prints a 0-100 scorecard. Each check sends a small batch of requests and grades your handler's status codes:
+
+| Check | Sends | Expected | Severity |
+|---|---|---|---|
+| Valid signature accepted | a correctly signed webhook | 2xx | high |
+| Raw body (re-serialized JSON) | the same JSON pretty-printed, with keys reordered, and with `\u00eb` escapes, each signed over the exact bytes sent | 2xx for all | high (correctness) |
+| Unsigned / corrupted signature / wrong secret | signature header removed, corrupted, or made with another secret | 4xx | critical |
+| Empty/default secrets | signatures made with `''`, `secret`, `test`, `whsec_test` | 4xx | critical |
+| Tampered amount | body with amounts x100, carrying the valid signature of the original body | 4xx | critical |
+| Stale / future timestamp | Stripe `t=` or Cashfree `x-webhook-timestamp` 10 minutes old / ahead, validly signed (n/a for Razorpay, Juspay, Hyperswitch) | 4xx | high |
+| Client verify: forged signature, swapped ids, other order's payment | with `--client-verify-url` (Razorpay Checkout verify endpoint) | 4xx | critical |
+
+```bash
+carbon security --provider razorpay \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --client-verify-url http://localhost:8000/payments/verify --ci
+```
+
+Sample scorecard from a real run against a handler that verifies the HMAC over `json.dumps(json.loads(body))` (the Python twin of `JSON.stringify(req.body)`):
+
+```
+Webhook security: razorpay -> http://127.0.0.1:8002/webhooks
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Check                            ┃ Severity ┃ Want ┃ Got                ┃ Result                           ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Valid signature accepted         │ high     │ 2xx  │ 200                │ PASS accepted all 1              │
+│ Raw body (re-serialized JSON)    │ high     │ 2xx  │ 401, 200, 401      │ FAIL REJECTS VALID WEBHOOKS sent │
+│                                  │          │      │                    │ as: pretty-printed (whitespace), │
+│                                  │          │      │                    │ unicode escapes (\u00eb). The    │
+│                                  │          │      │                    │ signature is checked against     │
+│                                  │          │      │                    │ re-serialized JSON, not the raw  │
+│                                  │          │      │                    │ body                             │
+│ Unsigned                         │ critical │ 4xx  │ 401                │ PASS rejected all 1              │
+│ Corrupted signature              │ critical │ 4xx  │ 401                │ PASS rejected all 1              │
+│ Wrong secret                     │ critical │ 4xx  │ 401                │ PASS rejected all 1              │
+│ Empty/default secrets            │ critical │ 4xx  │ 401, 401, 401, 401 │ PASS rejected all 4              │
+│ Tampered amount                  │ critical │ 4xx  │ 401                │ PASS rejected all 1              │
+│ Client verify: valid             │ high     │ 2xx  │ 200                │ PASS accepted all 1              │
+│ Client verify: forged signature  │ critical │ 4xx  │ 401, 401           │ PASS rejected all 2              │
+│ Client verify: swapped ids       │ critical │ 4xx  │ 401                │ PASS rejected all 1              │
+│ Client verify: other order's     │ critical │ 4xx  │ 401                │ PASS rejected all 1              │
+│ payment                          │          │      │                    │                                  │
+│ Stale timestamp                  │ high     │ 4xx  │ -                  │ N/A no signed timestamp          │
+│ Future timestamp                 │ high     │ 4xx  │ -                  │ N/A no signed timestamp          │
+└──────────────────────────────────┴──────────┴──────┴────────────────────┴──────────────────────────────────┘
+
+How to fix
+  raw_body: Compute the HMAC over the exact request bytes (Flask request.get_data(), Django request.body,
+Express express.raw()), never over json.dumps/JSON.stringify of the parsed body: re-serializing changes
+whitespace, key order and escapes.
+
+Security score: 95/100
+```
+
+The raw-body check catches handlers that rebuild the JSON before verifying. That isn't a security hole, but the handler **rejects real webhooks** whenever the gateway's bytes differ from your re-serialization (whitespace, key order, escaped non-ASCII text such as names or notes), and the gateway then retries and eventually disables the endpoint. The fix is to HMAC the raw request body (`request.get_data()` in Flask, `request.body` in Django, `express.raw()` in Express) and parse it only after verifying. Stripe and Cashfree both document this; Razorpay warns "Do Not Parse or Cast the Webhook Request Body".
+
+Scoring: critical checks weigh 10, high checks 5; the score is the weighted share passed, and any critical failure caps it at 40, because one accepted forgery lets anyone fake a payment. A check is `n/a` when the provider has no such mechanism, and `inconclusive` when your handler accepted no valid webhook at all (usually a wrong `--webhook-secret`), since rejecting forgeries then proves nothing. A rejection must be a 4xx; 5xx or no response fails the check.
+
+`--ci` exits 1 when a critical check fails or can't be graded. `--output json` prints one JSON document on stdout (score, every check with expected outcome, observed status codes, result and fix), with everything else on stderr. Exit 3 means nothing was listening on `--webhook-url`.
+
+---
+
 ## Webhook Replay
 
 Replay stored webhook payloads from any previous run. Useful for regression testing after code changes:

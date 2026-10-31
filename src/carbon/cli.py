@@ -450,6 +450,101 @@ def replay(
 
 
 @app.command()
+def security(
+    provider: Provider = typer.Option(
+        Provider.razorpay, "--provider", "-p", help="Webhook format and signing to attack with (mock = Razorpay)"
+    ),
+    webhook_url: str = typer.Option(..., "--webhook-url", help="Your webhook endpoint"),
+    webhook_secret: str = typer.Option(
+        ..., "--webhook-secret", help="The webhook secret your handler verifies with"
+    ),
+    client_verify_url: Optional[str] = typer.Option(
+        None,
+        "--client-verify-url",
+        help="Razorpay only: your Checkout verify endpoint; adds forged/swapped-id checks",
+    ),
+    client_verify_secret: Optional[str] = typer.Option(
+        None,
+        "--client-verify-secret",
+        envvar="RAZORPAY_KEY_SECRET",
+        help="API key secret for client verify signatures (defaults to --webhook-secret)",
+    ),
+    ci: bool = typer.Option(
+        False, "--ci", help="Exit 1 if any critical check fails or cannot be graded"
+    ),
+    output: OutputFormat = typer.Option(OutputFormat.terminal, "--output", help="Output format"),
+) -> None:
+    """Attack your webhook handler with forged, tampered, replayed and re-serialized webhooks; print a 0-100 score."""
+    from carbon.webhook.security import run_security_checks
+
+    console.stderr = output == OutputFormat.json
+    webhook_provider = "razorpay" if provider == Provider.mock else provider.value
+    if client_verify_url and webhook_provider != "razorpay":
+        console.print("[red]--client-verify-url needs --provider razorpay[/red]")
+        raise typer.Exit(2)
+    card = asyncio.run(run_security_checks(
+        provider=webhook_provider,
+        webhook_url=webhook_url,
+        secret=webhook_secret,
+        client_verify_url=client_verify_url,
+        client_verify_secret=client_verify_secret,
+    ))
+    if output == OutputFormat.json:
+        import json as _json
+
+        print(_json.dumps({"carbon_version": __version__, **card}, indent=2, ensure_ascii=False))
+    else:
+        _print_scorecard(card)
+
+    if card["nothing_listening"]:
+        console.print(
+            f"[yellow]Hint: Nothing is listening on {webhook_url} (connection refused). "
+            "Start your handler, or check the host and port.[/yellow]"
+        )
+        raise typer.Exit(EXIT_NOTHING_LISTENING)
+    ungraded = [c for c in card["checks"] if c["severity"] == "critical" and c["status"] == "inconclusive"]
+    if ci and (card["critical_failures"] or ungraded):
+        for c in card["checks"]:
+            if c["severity"] == "critical" and c["status"] in ("fail", "inconclusive"):
+                console.print(f"[red]CI check failed: {c['id']}: {c['message']}[/red]")
+        raise typer.Exit(1)
+
+
+_STATUS_STYLE = {"pass": "green", "fail": "red", "n/a": "dim", "inconclusive": "yellow"}
+
+
+def _print_scorecard(card: dict) -> None:
+    from rich.table import Table
+
+    table = Table(title=f"Webhook security: {card['provider']} -> {card['webhook_url']}", title_justify="left")
+    table.add_column("Check")
+    table.add_column("Severity")
+    table.add_column("Want")
+    table.add_column("Got")
+    table.add_column("Result")
+    for c in sorted(card["checks"], key=lambda c: c["status"] == "n/a"):
+        style = _STATUS_STYLE[c["status"]]
+        got = ", ".join("none" if s is None else str(s) for s in c["statuses"]) or "-"
+        table.add_row(
+            c["name"], c["severity"], c["expected"], got,
+            f"[{style}]{c['status'].upper()}[/{style}] {c['message']}",
+        )
+    console.print(table)
+    fixes = [c for c in card["checks"] if c["fix"]]
+    if fixes:
+        console.print("\n[bold]How to fix[/bold]")
+        for c in fixes:
+            console.print(f"  [red]{c['id']}[/red]: {c['fix']}")
+    color = "green" if card["score"] == 100 else "yellow" if card["score"] >= 70 else "red"
+    console.print(f"\n[bold]Security score: [{color}]{card['score']}/100[/{color}][/bold]")
+    if card["critical_failures"]:
+        console.print(
+            f"[red]{len(card['critical_failures'])} critical: your handler accepts webhooks an attacker "
+            "can forge (score capped at 40).[/red]"
+        )
+
+
+@app.command()
 def report(
     run_id: Optional[str] = typer.Argument(None, help="Run ID from a previous run"),
     run_id_opt: Optional[str] = typer.Option(None, "--run-id", help="Same as the RUN_ID argument"),
