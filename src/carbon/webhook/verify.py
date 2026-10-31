@@ -32,34 +32,57 @@ def read_counter(cmd: str, timeout_s: float = 60.0) -> float:
         raise VerifyError(f"--verify-cmd must print a number, got: {lines[-1][:80]!r}") from e
 
 
-def evaluate(before: float, after: float, deliveries: list[dict], event_type: str) -> dict:
-    """Compare observed counter change with unique acknowledged events of event_type."""
-    acked = {
-        d.get("provider_event_id") or d.get("payload")
-        for d in deliveries
-        if d.get("event_type") == event_type and d.get("ok")
-    }
+def evaluate(
+    before: float,
+    after: float,
+    deliveries: list[dict],
+    event_type: str,
+    client_calls: list[dict] | None = None,
+) -> dict:
+    """Compare observed counter change with unique acknowledged events of event_type.
+
+    With client_calls (client-side verify requests), the unit is the payment: a payment
+    acknowledged on either path should cause exactly one side effect.
+    """
+    if client_calls is not None:
+        acked = {d.get("remote_id") for d in deliveries if d.get("event_type") == event_type and d.get("ok")}
+        acked |= {c["payment_id"] for c in client_calls if c.get("ok")}
+        acked.discard(None)
+        acked.discard("")
+    else:
+        acked = {
+            d.get("provider_event_id") or d.get("payload")
+            for d in deliveries
+            if d.get("event_type") == event_type and d.get("ok")
+        }
     sent = sum(1 for d in deliveries if d.get("event_type") == event_type)
     expected = len(acked)
     observed = after - before
+    unit = "payments" if client_calls is not None else "events"
     if observed == expected:
-        verdict, message = "pass", f"{event_type}: each event processed exactly once"
+        verdict = "pass"
+        message = (
+            f"{event_type}: each payment processed exactly once across webhook and client verify"
+            if client_calls is not None
+            else f"{event_type}: each event processed exactly once"
+        )
     elif observed > expected:
         verdict = "duplicates"
-        message = (
-            f"{event_type}: {expected} unique events caused {observed:g} side effects; "
-            f"handler is not idempotent"
-        )
+        message = f"{event_type}: {expected} unique {unit} caused {observed:g} side effects; handler is not idempotent"
+        if client_calls is not None:
+            message += " (the webhook and the client verify call both apply the effect; key it on the payment id)"
+
     else:
         verdict = "lost"
         message = (
-            f"{event_type}: {expected} unique events acknowledged (2xx) but only "
+            f"{event_type}: {expected} unique {unit} acknowledged (2xx) but only "
             f"{observed:g} side effects; events were acked without being processed"
         )
     return {
         "event_type": event_type,
         "deliveries": sent,
         "unique_events_acked": expected,
+        "client_verify_calls": len(client_calls) if client_calls is not None else None,
         "before": before,
         "after": after,
         "observed_change": observed,

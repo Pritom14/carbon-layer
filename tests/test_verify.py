@@ -114,3 +114,39 @@ class TestParameterReferences:
     def test_unknown_reference_rejected(self):
         with pytest.raises(ValueError):
             render_expected(">= ${nope}", {})
+
+
+def test_evaluate_counts_payments_across_webhook_and_client_verify():
+    from carbon.webhook.verify import evaluate
+
+    deliveries = [
+        {"event_type": "payment.captured", "ok": True, "remote_id": "pay_1", "provider_event_id": "evt_a"},
+        {"event_type": "payment.captured", "ok": True, "remote_id": "pay_2", "provider_event_id": "evt_b"},
+    ]
+    calls = [{"payment_id": "pay_1", "ok": True}, {"payment_id": "pay_2", "ok": True}]
+    # Credited once on each path -> 4 effects for 2 payments
+    v = evaluate(10, 14, deliveries, "payment.captured", client_calls=calls)
+    assert v["verdict"] == "duplicates"
+    assert v["unique_events_acked"] == 2
+    assert v["client_verify_calls"] == 2
+    assert "client verify" in v["message"]
+    assert evaluate(10, 12, deliveries, "payment.captured", client_calls=calls)["passed"]
+    # A payment acked only by the client path still counts
+    v = evaluate(0, 1, [], "payment.captured", client_calls=[{"payment_id": "pay_9", "ok": True}])
+    assert v["passed"]
+
+
+def test_checkout_signature_and_captured_payments():
+    import hashlib
+    import hmac
+
+    from carbon.webhook.client_verify import captured_payments, razorpay_checkout_signature
+
+    expected = hmac.new(b"key_secret", b"order_1|pay_1", hashlib.sha256).hexdigest()
+    assert razorpay_checkout_signature("order_1", "pay_1", "key_secret") == expected
+    ev = lambda pid, oid, t="payment.captured": {  # noqa: E731
+        "event_type": t,
+        "payload": {"payload": {"payment": {"entity": {"id": pid, "order_id": oid}}}},
+    }
+    pays = captured_payments([ev("pay_1", "order_1"), ev("pay_1", "order_1"), ev("pay_2", "order_2"), ev("pay_3", "o", "payment.failed")])
+    assert pays == [{"payment_id": "pay_1", "order_id": "order_1"}, {"payment_id": "pay_2", "order_id": "order_2"}]
