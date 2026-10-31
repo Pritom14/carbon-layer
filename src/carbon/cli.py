@@ -470,7 +470,12 @@ def security(
         help="API key secret for client verify signatures (defaults to --webhook-secret)",
     ),
     ci: bool = typer.Option(
-        False, "--ci", help="Exit 1 if any critical check fails or cannot be graded"
+        False, "--ci", help="Exit 1 if a check fails or a critical check cannot be graded"
+    ),
+    fail_on: str = typer.Option(
+        "any",
+        "--fail-on",
+        help="With --ci: 'any' fails on every failed check (default); 'critical' only on critical ones",
     ),
     output: OutputFormat = typer.Option(OutputFormat.terminal, "--output", help="Output format"),
 ) -> None:
@@ -478,6 +483,9 @@ def security(
     from carbon.webhook.security import run_security_checks
 
     console.stderr = output == OutputFormat.json
+    if fail_on not in ("any", "critical"):
+        console.print("[red]--fail-on must be any or critical[/red]")
+        raise typer.Exit(2)
     webhook_provider = "razorpay" if provider == Provider.mock else provider.value
     if client_verify_url and webhook_provider != "razorpay":
         console.print("[red]--client-verify-url needs --provider razorpay[/red]")
@@ -502,11 +510,14 @@ def security(
             "Start your handler, or check the host and port.[/yellow]"
         )
         raise typer.Exit(EXIT_NOTHING_LISTENING)
-    ungraded = [c for c in card["checks"] if c["severity"] == "critical" and c["status"] == "inconclusive"]
-    if ci and (card["critical_failures"] or ungraded):
-        for c in card["checks"]:
-            if c["severity"] == "critical" and c["status"] in ("fail", "inconclusive"):
-                console.print(f"[red]CI check failed: {c['id']}: {c['message']}[/red]")
+    blocking = [
+        c for c in card["checks"]
+        if (c["severity"] == "critical" and c["status"] in ("fail", "inconclusive"))
+        or (fail_on == "any" and c["status"] == "fail")
+    ]
+    if ci and blocking:
+        for c in blocking:
+            console.print(f"[red]CI check failed: {c['id']}: {c['message']}[/red]")
         raise typer.Exit(1)
 
 

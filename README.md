@@ -303,7 +303,7 @@ The raw-body check catches handlers that rebuild the JSON before verifying. That
 
 Scoring: critical checks weigh 10, high checks 5; the score is the weighted share passed, and any critical failure caps it at 40, because one accepted forgery lets anyone fake a payment. A check is `n/a` when the provider has no such mechanism, and `inconclusive` when your handler accepted no valid webhook at all (usually a wrong `--webhook-secret`), since rejecting forgeries then proves nothing. A rejection must be a 4xx; 5xx or no response fails the check.
 
-`--ci` exits 1 when a critical check fails or can't be graded. `--output json` prints one JSON document on stdout (score, every check with expected outcome, observed status codes, result and fix), with everything else on stderr. Exit 3 means nothing was listening on `--webhook-url`.
+`--ci` exits 1 when any check fails (rejecting valid webhooks loses payments; accepting stale timestamps allows replays) or a critical check can't be graded. Use `--fail-on critical` to fail only on critical checks. `--output json` prints one JSON document on stdout (score, every check with expected outcome, observed status codes, result and fix), with everything else on stderr. Exit 3 means nothing was listening on `--webhook-url`.
 
 ---
 

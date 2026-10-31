@@ -366,12 +366,22 @@ def test_cli_ci_exits_1_on_critical_failure():
     assert "CI check failed: missing_signature" in result.stdout + result.stderr
 
 
-def test_cli_ci_passes_for_reserialized_handler_but_flags_it():
+def test_cli_ci_fails_reserialized_handler_unless_critical_only():
+    # Rejecting valid webhooks loses payments, so --ci fails by default
     with respx.mock:
         respx.post(URL).mock(side_effect=razorpay_reserialized)
         result = _cli("-p", "razorpay", "--ci")
-    assert result.exit_code == 0, result.stdout
+    assert result.exit_code == 1, result.stdout
     assert "raw_body: Compute the HMAC over the exact request bytes" in result.stdout
+    assert "CI check failed: raw_body" in result.stdout + result.stderr
+    with respx.mock:
+        respx.post(URL).mock(side_effect=razorpay_reserialized)
+        relaxed = _cli("-p", "razorpay", "--ci", "--fail-on", "critical")
+    assert relaxed.exit_code == 0, relaxed.stdout
+
+
+def test_cli_rejects_unknown_fail_on():
+    assert _cli("--fail-on", "some").exit_code == 2
 
 
 def test_cli_ci_exits_1_when_nothing_valid_is_accepted():
