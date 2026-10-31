@@ -186,6 +186,27 @@ Carbon Layer runs the command before and after delivery and compares the change 
 
 With `--ci`, a failed verification exits with code 1. The command runs right after the last delivery, so if your handler processes events asynchronously (queue/worker), point it at something that reflects completed work or add a wait (`sleep 5 && psql ...`).
 
+### Webhook plus client-side verify (Razorpay)
+
+Deduping on `X-Razorpay-Event-Id` only covers webhook retries. Many apps also credit the user in their client-side "verify payment" endpoint (the one Razorpay Checkout's `handler` posts `razorpay_order_id`, `razorpay_payment_id` and `razorpay_signature` to). Those are two different requests for the same payment, so an event-id check lets both through.
+
+`--client-verify-url` sends a correctly signed Checkout-style verify request for every captured payment before the webhooks, and the check then counts **one side effect per payment** across both paths:
+
+```bash
+carbon run flash-sale --provider razorpay --webhook-url http://localhost:8000/webhooks \
+  --webhook-secret $WEBHOOK_SECRET --webhook-repeat 2 \
+  --client-verify-url http://localhost:8000/payments/verify --client-verify-secret $RAZORPAY_KEY_SECRET \
+  --verify-cmd "psql -tAc 'select count(*) from wallet_credits'"
+```
+
+```
+deliveries sent: 40   client verify calls: 20   unique payments acked: 20   counter: 0 -> 40 (change 40)
+FAIL: duplicate processing: payment.captured: 20 unique payments caused 40 side effects; handler is not idempotent
+(the webhook and the client verify call both apply the effect; key it on the payment id)
+```
+
+The fix is a unique key on the effect itself (one credit row per `payment_id`), which covers both paths and redelivery. Use `--client-verify-format form` if your endpoint expects form fields instead of JSON.
+
 ### Out-of-order delivery
 
 Gateways don't guarantee webhook order. Test with randomized or reversed delivery:

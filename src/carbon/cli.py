@@ -90,6 +90,22 @@ def run(
     verify_event: str = typer.Option(
         "payment.captured", "--verify-event", help="Event type whose side effect --verify-cmd counts"
     ),
+    client_verify_url: Optional[str] = typer.Option(
+        None,
+        "--client-verify-url",
+        help="Razorpay only: also POST a Checkout-style verify request (razorpay_order_id, "
+        "razorpay_payment_id, razorpay_signature) here for every captured payment, before the "
+        "webhooks. With --verify-cmd, checks one side effect per payment across both paths.",
+    ),
+    client_verify_secret: Optional[str] = typer.Option(
+        None,
+        "--client-verify-secret",
+        envvar="RAZORPAY_KEY_SECRET",
+        help="API key secret used to sign client verify requests (defaults to --webhook-secret)",
+    ),
+    client_verify_format: str = typer.Option(
+        "json", "--client-verify-format", help="Body format for client verify requests: json or form"
+    ),
 ) -> None:
     """Run a scenario and print report."""
     settings = get_settings()
@@ -169,11 +185,20 @@ def run(
     if verify_cmd and not webhook_url:
         console.print("[red]--verify-cmd requires --webhook-url[/red]")
         raise typer.Exit(2)
+    if client_verify_url and (webhook_provider != "razorpay" or not webhook_url):
+        console.print("[red]--client-verify-url needs --provider razorpay and --webhook-url[/red]")
+        raise typer.Exit(2)
+    if client_verify_format not in ("json", "form"):
+        console.print("[red]--client-verify-format must be json or form[/red]")
+        raise typer.Exit(2)
     try:
         run_id, verification = asyncio.run(_do_run(
             plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
             webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
             webhook_provider=webhook_provider, verify_cmd=verify_cmd, verify_event=verify_event,
+            client_verify_url=client_verify_url,
+            client_verify_secret=client_verify_secret or webhook_secret or "carbon",
+            client_verify_format=client_verify_format,
         ))
     except VerifyError as e:
         console.print(f"[red]{e}[/red]")
@@ -248,6 +273,9 @@ async def _do_run(
     webhook_provider: str = "razorpay",
     verify_cmd: Optional[str] = None,
     verify_event: str = "payment.captured",
+    client_verify_url: Optional[str] = None,
+    client_verify_secret: str = "carbon",
+    client_verify_format: str = "json",
 ) -> tuple[str, Optional[dict]]:
     await ensure_db()
     run_id = await create_run(scenario_name, provider, plan.parameters)
@@ -256,6 +284,21 @@ async def _do_run(
         await run_plan(plan, run_id, provider, adapter)
         if webhook_url:
             before = read_counter(verify_cmd) if verify_cmd else None
+            client_calls = None
+            if client_verify_url:
+                from carbon.storage.repo import get_entity_map
+                from carbon.webhook.client_verify import captured_payments, send_client_verifications
+                from carbon.webhook.payloads import build_events_from_entity_map
+
+                events = build_events_from_entity_map(await get_entity_map(run_id), provider="razorpay")
+                client_calls = await send_client_verifications(
+                    captured_payments(events),
+                    url=client_verify_url,
+                    key_secret=client_verify_secret,
+                    fmt=client_verify_format,
+                )
+                ok = sum(1 for c in client_calls if c["ok"])
+                console.print(f"[dim]Client verify calls: {len(client_calls)} sent, {ok} returned 2xx[/dim]")
             deliveries = await send_webhooks(
                 run_id,
                 target_url=webhook_url,
@@ -267,7 +310,7 @@ async def _do_run(
             )
             if verify_cmd:
                 after = read_counter(verify_cmd)
-                verification = evaluate(before, after, deliveries, verify_event)
+                verification = evaluate(before, after, deliveries, verify_event, client_calls=client_calls)
         await run_validations(run_id)
         if callback_url:
             result = await post_run_callback(run_id, callback_url)
@@ -286,7 +329,9 @@ def _print_verification(v: dict) -> None:
     label = {"pass": "PASS", "duplicates": "FAIL: duplicate processing", "lost": "FAIL: lost events"}[v["verdict"]]
     console.print(f"\n[bold]Side-effect verification[/bold] ({v['event_type']})")
     console.print(
-        f"  deliveries sent: {v['deliveries']}   unique events acked: {v['unique_events_acked']}   "
+        f"  deliveries sent: {v['deliveries']}   "
+        + (f"client verify calls: {v['client_verify_calls']}   " if v.get("client_verify_calls") is not None else "")
+        + f"unique {'payments' if v.get('client_verify_calls') is not None else 'events'} acked: {v['unique_events_acked']}   "
         f"counter: {v['before']:g} -> {v['after']:g} (change {v['observed_change']:g})"
     )
     console.print(f"  [{color}]{label}[/{color}]: {v['message']}")
