@@ -5,6 +5,13 @@ from collections import defaultdict
 from carbon.storage.repo import get_findings, get_run, get_webhook_deliveries
 
 
+def _result_cell(f: dict) -> str:
+    # Simulator counts are informational: they can't fail because of your handler
+    if f["severity"] == "info":
+        return "[dim]info[/dim]"
+    return "[green]✓[/green]" if f["passed"] else "[red]✗[/red]"
+
+
 async def print_report(run_id: str) -> None:
     from rich.console import Console
     from rich.table import Table
@@ -19,7 +26,7 @@ async def print_report(run_id: str) -> None:
     table = Table(title=f"Carbon — {run['scenario_name']}", show_header=True)
     table.add_column("Check", style="cyan")
     table.add_column("Severity", style="magenta")
-    table.add_column("Passed", style="green")
+    table.add_column("Passed")
     table.add_column("Expected", style="dim")
     table.add_column("Got", style="dim")
     table.add_column("Message", style="white")
@@ -30,7 +37,7 @@ async def print_report(run_id: str) -> None:
         table.add_row(
             f["check_name"],
             f["severity"],
-            "✓" if f["passed"] else "✗",
+            _result_cell(f),
             expected_str,
             got_str,
             f.get("message") or "",
@@ -81,11 +88,12 @@ async def print_report(run_id: str) -> None:
         console.print("\n")
         console.print(f"[dim]Target: {target}[/dim]")
         console.print(wh)
+    else:
+        console.print(
+            "\n[yellow]Nothing tested: add --webhook-url to send webhooks to your handler.[/yellow]"
+            "\n[dim]Rows marked info count what Carbon simulated; they don't grade your system.[/dim]"
+        )
 
-    console.print(f"\n[dim]Run: {run_id}  Provider: {run['provider']}  Status: {run['status']}[/dim]")
-
-    # Pro teaser
     console.print(
-        "\n[dim]Want scheduled runs, PDF reports, and compliance dashboards?[/dim]"
-        "\n[dim]Join the Carbon Layer Pro waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]"
+        f"\n[dim]Run: {run_id}  Webhook format: {run['provider']}  Status: {run['status']}[/dim]"
     )

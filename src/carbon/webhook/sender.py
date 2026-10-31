@@ -115,6 +115,8 @@ async def _post_one(
             ok = 200 <= resp.status_code < 300
             if resp.text:
                 response_body = resp.text[:500]
+        except httpx.ConnectError as e:
+            error = f"ConnectError: {e}"
         except Exception as e:
             error = str(e)
         duration_ms = int((asyncio.get_event_loop().time() - t0) * 1000)
@@ -136,28 +138,27 @@ async def _post_one(
         }
 
 
-_NON_SIGNATURE_HEADERS = ("content-type", "x-razorpay-event-id")
+# Headers that carry the signature itself. Timestamp/version/event-id headers are left
+# intact so a handler fails on the signature check, not on parsing something else.
+SIGNATURE_HEADERS = frozenset({
+    "x-razorpay-signature",
+    "stripe-signature",
+    "x-webhook-signature",
+    "authorization",
+    "x-webhook-signature-512",
+})
 
 
 def _apply_signature_mode(headers: dict[str, str], mode: str) -> dict[str, str]:
-    """Mutate headers based on signature mode for testing handler verification."""
-    if mode == "valid":
-        return headers
+    """Mutate signature headers based on signature mode for testing handler verification."""
     if mode == "missing":
-        # Remove all signature-related headers
-        sig_keys = [k for k in headers if k.lower() not in _NON_SIGNATURE_HEADERS]
-        for k in sig_keys:
+        for k in [k for k in headers if k.lower() in SIGNATURE_HEADERS]:
             headers.pop(k, None)
-        return headers
-    if mode == "corrupted":
-        # Corrupt signature values by appending garbage
+    elif mode == "corrupted":
         for k in list(headers):
-            if k.lower() not in _NON_SIGNATURE_HEADERS:
+            if k.lower() in SIGNATURE_HEADERS:
                 headers[k] = headers[k] + "CORRUPTED"
-        return headers
-    if mode == "wrong_secret":
-        # Already handled by caller passing a different secret
-        return headers
+    # "valid" passes through; "wrong_secret" is handled by the caller signing with another secret
     return headers
 
 

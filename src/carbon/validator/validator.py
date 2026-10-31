@@ -1,4 +1,10 @@
-"""Run validations for a run and store findings."""
+"""Run validations for a run and store findings.
+
+Every check here counts entities Carbon itself simulated, so it can't tell you anything
+about your handler. These findings are stored with severity "info" and never decide
+pass/fail; graded checks come from webhook responses (carbon.webhook.checks) and
+side-effect verification.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +17,8 @@ import dataclasses
 from carbon.compiler.compiler import render_expected
 from carbon.scenarios.registry import load_scenario
 from carbon.storage.repo import get_entity_map, get_run, insert_finding
+
+INFO = "info"
 
 # Metric names that scenarios can reference in validations (check) and findings (condition).
 METRIC_NAMES = frozenset({
@@ -150,7 +158,7 @@ async def run_validations(run_id: str) -> None:
                 await insert_finding(
                     run_id,
                     check or "unknown",
-                    v.severity or "high",
+                    INFO,
                     False,
                     f"Unknown check: {check!r}",
                     {"expected": v.expected},
@@ -161,7 +169,7 @@ async def run_validations(run_id: str) -> None:
             await insert_finding(
                 run_id,
                 check,
-                v.severity or "high",
+                INFO,
                 passed,
                 message,
                 {"expected": v.expected, "got": actual, "description": v.description},
@@ -174,32 +182,20 @@ async def run_validations(run_id: str) -> None:
                 continue
             if _evaluate_condition(str(condition), metrics):
                 message = f.get("message") or condition
-                severity = f.get("severity") or "medium"
                 await insert_finding(
                     run_id,
                     "finding",
-                    severity,
+                    INFO,
                     False,
                     message,
                     {"condition": condition},
                 )
-        # Scenario validations decide pass/fail; default counts are informational
-        await _insert_default_findings(run_id, entity_map, severity="low", informational=True)
     else:
-        await _insert_default_findings(run_id, entity_map, severity_orders="high", severity_rest="medium")
+        await _insert_default_findings(run_id, entity_map)
 
 
-async def _insert_default_findings(
-    run_id: str,
-    entity_map: dict,
-    severity: str | None = None,
-    severity_orders: str | None = None,
-    severity_rest: str | None = None,
-    informational: bool = False,
-) -> None:
-    """Insert the four default count findings."""
-    sev_ord = severity or severity_orders or "high"
-    sev_rest = severity or severity_rest or "medium"
+async def _insert_default_findings(run_id: str, entity_map: dict) -> None:
+    """Insert the four default (informational) count findings."""
     orders = [k for k, v in entity_map.items() if v.get("entity_type") == "order"]
     captured = [
         k for k, v in entity_map.items()
@@ -208,18 +204,18 @@ async def _insert_default_findings(
     disputes = [k for k, v in entity_map.items() if v.get("entity_type") == "dispute"]
     refunds = [k for k, v in entity_map.items() if v.get("entity_type") == "refund"]
     await insert_finding(
-        run_id, "orders_created", sev_ord, informational or len(orders) > 0,
+        run_id, "orders_created", INFO, True,
         f"Orders created: {len(orders)}", {"count": len(orders)},
     )
     await insert_finding(
-        run_id, "payments_captured", sev_ord, informational or len(captured) > 0,
+        run_id, "payments_captured", INFO, True,
         f"Payments captured: {len(captured)}", {"count": len(captured)},
     )
     await insert_finding(
-        run_id, "disputes_created", sev_rest, True,
+        run_id, "disputes_created", INFO, True,
         f"Disputes created: {len(disputes)}", {"count": len(disputes)},
     )
     await insert_finding(
-        run_id, "refunds_created", sev_rest, True,
+        run_id, "refunds_created", INFO, True,
         f"Refunds created: {len(refunds)}", {"count": len(refunds)},
     )

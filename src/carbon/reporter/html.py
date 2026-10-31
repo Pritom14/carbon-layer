@@ -22,12 +22,14 @@ async def generate_html_report(run_id: str) -> str:
         expected = details.get("expected", "")
         got = details.get("got", "")
         passed = f["passed"]
-        row_class = "passed" if passed else "failed"
+        info = f["severity"] == "info"
+        row_class = "info" if info else ("passed" if passed else "failed")
+        result = "Info" if info else ("Pass" if passed else "Fail")
         findings_rows += f"""
         <tr class="{row_class}">
             <td>{f["check_name"]}</td>
             <td>{f["severity"]}</td>
-            <td>{"Pass" if passed else "Fail"}</td>
+            <td>{result}</td>
             <td>{expected}</td>
             <td>{got}</td>
             <td>{f.get("message") or ""}</td>
@@ -117,6 +119,7 @@ async def generate_html_report(run_id: str) -> str:
   tr.passed td:nth-child(3) {{ color: #1a7a1a; font-weight: bold; }}
   tr.failed td {{ background: #fff5f5; }}
   tr.failed td:nth-child(3) {{ color: #cc0000; font-weight: bold; }}
+  tr.info td {{ color: #666; }}
   tr.total td {{ border-top: 2px solid #111; background: #f9f9f9; }}
   .status-completed {{ color: #1a7a1a; }}
   .status-failed {{ color: #cc0000; }}
@@ -125,7 +128,7 @@ async def generate_html_report(run_id: str) -> str:
 <body>
 <h1>Carbon Layer Report</h1>
 <p class="meta">Scenario: <strong>{run["scenario_name"]}</strong></p>
-<p class="meta">Provider: {run["provider"]}</p>
+<p class="meta">Webhook format: {run["provider"]}</p>
 <p class="meta">Run ID: {run_id}</p>
 <p class="meta">Status: <span class="status-{run["status"]}">{run["status"]}</span></p>
 <p class="meta">Started: {started} &nbsp; Completed: {completed}</p>

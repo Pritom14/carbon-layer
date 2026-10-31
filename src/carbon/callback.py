@@ -20,7 +20,8 @@ async def post_run_callback(
         findings = await get_findings(run_id)
         deliveries = await get_webhook_deliveries(run_id)
 
-        failed_findings = [f for f in findings if not f["passed"]]
+        # Informational findings (simulator counts) never fail a run
+        failed_findings = [f for f in findings if f["severity"] != "info" and not f["passed"]]
         critical_failed = [f for f in failed_findings if f["severity"] in ("critical", "high")]
 
         webhook_summary: dict[str, int] = {"total_sent": 0, "2xx": 0, "4xx": 0, "5xx": 0, "timeout": 0}
@@ -41,6 +42,7 @@ async def post_run_callback(
             "run_id": run_id,
             "scenario": run["scenario_name"] if run else "",
             "provider": run["provider"] if run else "",
+            "webhook_format": run["provider"] if run else "",
             "status": run["status"] if run else "unknown",
             "passed": len(failed_findings) == 0,
             "findings": {

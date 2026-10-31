@@ -25,6 +25,18 @@ def _entity_row(local_id: str, entity_type: str, remote_id: str, state: str | No
     return {"local_id": local_id, "entity_type": entity_type, "remote_id": remote_id, "state": state, "metadata": metadata or {}}
 
 
+def _entity_amount(entity_map: dict, ref: str) -> int | None:
+    """Amount (paise) of a payment, falling back to its order's amount."""
+    for local_id in (ref, ref[len("payment_"):] if ref.startswith("payment_") else None):
+        if not local_id:
+            continue
+        meta = (entity_map.get(local_id) or {}).get("metadata") or {}
+        amount = meta.get("amount") or meta.get("amount_paise")
+        if isinstance(amount, (int, float)) and amount > 0:
+            return int(amount)
+    return None
+
+
 async def _run_step(
     step: Step,
     run_id: str,
@@ -131,7 +143,8 @@ async def _execute_one(
 
     if action_type == "capture_payments" and ref:
         payment_remote_id = entity_map.get(ref, {}).get("remote_id") or ref
-        amount = params.get("amount_paise") or 250000
+        # Capture the full amount of the payment (i.e. its order) unless the step overrides it
+        amount = params.get("amount_paise") or _entity_amount(entity_map, ref) or 250000
         out = await adapter.capture_payment(payment_remote_id, amount)
         return [_entity_row(ref, "payment", payment_remote_id, "captured", out)]
 
