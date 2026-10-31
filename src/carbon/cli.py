@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from enum import Enum
 from typing import Optional
 
 import typer
 from rich.console import Console
 
+from carbon import __version__
 from carbon.adapters import get_adapter
 from carbon.callback import post_run_callback
 from carbon.compiler import compile_scenario
@@ -16,22 +18,80 @@ from carbon.engine import run_plan
 from carbon.reporter import print_report
 from carbon.reporter.html import generate_html_report
 from carbon.scenarios import list_scenarios, load_scenario
-from carbon.storage.repo import create_run, ensure_db, update_run_status
+from carbon.storage.repo import create_run, ensure_db, insert_finding, update_run_status
 from carbon.validator import run_validations
 from carbon.webhook import replay_webhooks, send_webhooks
+from carbon.webhook.checks import delivery_hints, evaluate_deliveries, nothing_listening, overall_passed
 from carbon.webhook.verify import VerifyError, evaluate, read_counter
 
-app = typer.Typer(name="carbon", help="Chaos engineering for payment flows.")
+app = typer.Typer(
+    name="carbon",
+    help="Chaos engineering for payment flows.",
+    epilog="Carbon Layer Pro waitlist: pritom14.github.io/carbon-layer/waitlist",
+)
+# Human-readable output. Switched to stderr for --output json so stdout stays one JSON document.
 console = Console()
+err_console = Console(stderr=True)
+
+# Exit code when every webhook failed to connect (nothing listening on --webhook-url)
+EXIT_NOTHING_LISTENING = 3
 
 
-PRO_SCENARIOS = [
-    ("rbi-compliance-check", "RBI payment regulation compliance validation"),
-    ("pci-readiness-suite", "PCI DSS readiness checks for payment handlers"),
-    ("load-test-10k-tps", "10,000 TPS sustained load with webhook delivery"),
-    ("multi-gateway-failover", "Cross-provider failover under gateway outage"),
-    ("settlement-reconciliation", "End-to-end settlement and reconciliation stress test"),
-]
+class Provider(str, Enum):
+    mock = "mock"
+    razorpay = "razorpay"
+    stripe = "stripe"
+    cashfree = "cashfree"
+    juspay = "juspay"
+    hyperswitch = "hyperswitch"
+
+
+class WebhookOrder(str, Enum):
+    sequence = "sequence"
+    reverse = "reverse"
+    random = "random"
+
+
+class SignatureMode(str, Enum):
+    valid = "valid"
+    missing = "missing"
+    corrupted = "corrupted"
+    wrong_secret = "wrong_secret"
+
+
+class OutputFormat(str, Enum):
+    terminal = "terminal"
+    json = "json"
+
+
+class ReportFormat(str, Enum):
+    terminal = "terminal"
+    html = "html"
+
+
+_DISPLAY_NAME = {
+    "razorpay": "Razorpay",
+    "stripe": "Stripe",
+    "cashfree": "Cashfree",
+    "juspay": "Juspay",
+    "hyperswitch": "Hyperswitch",
+}
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"carbon-layer {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(
+        False, "--version", callback=_version_callback, is_eager=True, help="Show the version and exit."
+    ),
+) -> None:
+    """Chaos engineering for payment flows."""
+    console.stderr = False
 
 
 @app.command()
@@ -43,17 +103,14 @@ def scenarios_list() -> None:
         return
     for n in names:
         console.print(f"  • {n}")
-    console.print("")
-    console.print("[dim]Pro scenarios (coming soon):[/dim]")
-    for name, desc in PRO_SCENARIOS:
-        console.print(f"  [dim](locked) {name} — {desc}[/dim]")
-    console.print("\n[dim]Join the waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]")
 
 
 @app.command()
 def run(
     scenario_name: str = typer.Argument(..., help="Scenario name (e.g. dispute-spike)"),
-    provider: str = typer.Option("mock", "--provider", "-p", help="Provider: mock, razorpay, stripe, cashfree, juspay, or hyperswitch"),
+    provider: Provider = typer.Option(
+        Provider.mock, "--provider", "-p", help="Webhook format to simulate (mock sends Razorpay format)"
+    ),
     api_key: Optional[str] = typer.Option(None, "--api-key", envvar="RAZORPAY_API_KEY"),
     api_secret: Optional[str] = typer.Option(None, "--api-secret", envvar="RAZORPAY_API_SECRET"),
     stripe_key: Optional[str] = typer.Option(None, "--stripe-key", envvar="STRIPE_API_KEY"),
@@ -75,11 +132,23 @@ def run(
     callback_url: Optional[str] = typer.Option(
         None, "--callback-url", help="POST run summary JSON to this URL after completion (for CI/CD integration)"
     ),
-    ci: bool = typer.Option(False, "--ci", help="Exit with code 1 if any webhook returned 5xx or timed out"),
+    ci: bool = typer.Option(
+        False,
+        "--ci",
+        help="Exit with code 1 if any graded check fails: a 5xx/timeout, a bad signature accepted "
+        "with 2xx, or a failed --verify-cmd",
+    ),
     webhook_repeat: int = typer.Option(1, "--webhook-repeat", help="Fire each webhook N times to test idempotency"),
-    webhook_order: str = typer.Option("sequence", "--webhook-order", help="Webhook delivery order: sequence, reverse, or random"),
-    webhook_signature: str = typer.Option("valid", "--webhook-signature", help="Signature mode: valid, missing, corrupted, or wrong_secret"),
-    output: str = typer.Option("terminal", "--output", help="Output format: terminal or json"),
+    webhook_order: WebhookOrder = typer.Option(
+        WebhookOrder.sequence, "--webhook-order", help="Webhook delivery order"
+    ),
+    webhook_signature: SignatureMode = typer.Option(
+        SignatureMode.valid,
+        "--webhook-signature",
+        help="Signature mode. With missing/corrupted/wrong_secret your handler must reject every "
+        "webhook (400/401/403); any 2xx is a failure.",
+    ),
+    output: OutputFormat = typer.Option(OutputFormat.terminal, "--output", help="Output format"),
     verify_cmd: Optional[str] = typer.Option(
         None,
         "--verify-cmd",
@@ -108,43 +177,47 @@ def run(
     ),
 ) -> None:
     """Run a scenario and print report."""
+    provider = provider.value
+    webhook_order = webhook_order.value
+    webhook_signature = webhook_signature.value
+    output = output.value
+    # With --output json, stdout carries only the JSON document; everything else goes to stderr.
+    console.stderr = output == "json"
     settings = get_settings()
-    # Webhook format/signing follows the requested provider even when the adapter
-    # falls back to mock for lack of gateway credentials.
-    webhook_provider = (
-        provider if provider in ("razorpay", "stripe", "cashfree", "juspay", "hyperswitch") else "razorpay"
-    )
-    if provider == "hyperswitch":
-        # Hyperswitch sends merchants its own webhooks; the payment flow itself is simulated.
-        console.print("[dim]Hyperswitch: simulating payments locally, sending Hyperswitch-format webhooks.[/dim]")
-        provider = "mock"
+    requested_provider = provider
+    # Webhook format/signing follows the requested provider even when payments are simulated.
+    webhook_provider = "razorpay" if provider == "mock" else provider
 
     # Resolve credentials per provider
     if provider == "razorpay" and not (api_key and api_secret):
         api_key = settings.razorpay_api_key
         api_secret = settings.razorpay_api_secret
-    if provider == "razorpay" and not (api_key and api_secret):
-        console.print("[yellow]Razorpay keys not set. Using mock adapter.[/yellow]")
-        provider = "mock"
-
     if provider == "stripe" and not stripe_key:
         stripe_key = settings.stripe_api_key
-    if provider == "stripe" and not stripe_key:
-        console.print("[yellow]Stripe key not set. Using mock adapter.[/yellow]")
-        provider = "mock"
-
     if provider == "cashfree" and not (cashfree_id and cashfree_secret):
         cashfree_id = settings.cashfree_client_id
         cashfree_secret = settings.cashfree_client_secret
-    if provider == "cashfree" and not (cashfree_id and cashfree_secret):
-        console.print("[yellow]Cashfree credentials not set. Using mock adapter.[/yellow]")
-        provider = "mock"
-
     if provider == "juspay" and not (juspay_key and juspay_merchant_id):
         juspay_key = settings.juspay_api_key
         juspay_merchant_id = settings.juspay_merchant_id
-    if provider == "juspay" and not (juspay_key and juspay_merchant_id):
-        console.print("[yellow]Juspay credentials not set. Using mock adapter.[/yellow]")
+
+    has_keys = {
+        "razorpay": bool(api_key and api_secret),
+        "stripe": bool(stripe_key),
+        "cashfree": bool(cashfree_id and cashfree_secret),
+        "juspay": bool(juspay_key and juspay_merchant_id),
+    }.get(provider, False)
+    # Razorpay and Juspay cannot create payments or disputes server-side, and Hyperswitch
+    # only sends merchants webhooks, so those always simulate locally. Webhook testing never
+    # needs gateway keys.
+    if provider in ("mock", "razorpay", "juspay", "hyperswitch") or not has_keys:
+        note = ""
+        if has_keys:
+            note = f" ({_DISPLAY_NAME[provider]} keys ignored: its API can't create payments or disputes)"
+        err_console.print(
+            f"[dim]Simulating payments locally; sending {_DISPLAY_NAME[webhook_provider]}-format "
+            f"signed webhooks{note}[/dim]"
+        )
         provider = "mock"
 
     # Map provider-specific keys to the adapter registry's api_key/api_secret params
@@ -153,9 +226,6 @@ def run(
     elif provider == "cashfree":
         effective_key = cashfree_id
         api_secret = cashfree_secret
-    elif provider == "juspay":
-        effective_key = juspay_key
-        api_secret = juspay_merchant_id
     else:
         effective_key = api_key
 
@@ -192,7 +262,7 @@ def run(
         console.print("[red]--client-verify-format must be json or form[/red]")
         raise typer.Exit(2)
     try:
-        run_id, verification = asyncio.run(_do_run(
+        run_id, verification, deliveries = asyncio.run(_do_run(
             plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
             webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
             webhook_provider=webhook_provider, verify_cmd=verify_cmd, verify_event=verify_event,
@@ -204,21 +274,34 @@ def run(
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(2)
 
+    from carbon.storage.repo import get_findings, get_run
+
+    findings = asyncio.run(get_findings(run_id))
+    passed = overall_passed(findings, verification)
+    hints = delivery_hints(deliveries, webhook_signature, webhook_url or "")
+
     if output == "json":
         import json as _json
-        from carbon.storage.repo import get_findings, get_run, get_webhook_deliveries
         run_data = asyncio.run(get_run(run_id))
-        findings = asyncio.run(get_findings(run_id))
-        deliveries = asyncio.run(get_webhook_deliveries(run_id)) if webhook_url else []
+
+        def _count(pred) -> int:
+            return sum(1 for d in deliveries if pred(d.get("status_code")))
+
         result = {
+            "carbon_version": __version__,
             "run_id": run_id,
             "scenario": scenario_name,
-            "provider": provider,
+            "provider": requested_provider,
+            "webhook_format": webhook_provider,
+            "adapter": "simulated" if provider == "mock" else "live",
+            "signature_mode": webhook_signature,
+            "tested": bool(deliveries),
             "status": run_data["status"] if run_data else "unknown",
             "findings": [
                 {
                     "check": f["check_name"],
                     "severity": f["severity"],
+                    "informational": f["severity"] == "info",
                     "passed": f["passed"],
                     "message": f.get("message"),
                 }
@@ -227,12 +310,14 @@ def run(
             "webhooks": {
                 "total": len(deliveries),
                 "ok": sum(1 for d in deliveries if d.get("ok")),
-                "failed_5xx": sum(1 for d in deliveries if isinstance(d.get("status_code"), int) and d["status_code"] >= 500),
-                "timeout": sum(1 for d in deliveries if d.get("status_code") is None),
+                "status_2xx": _count(lambda sc: isinstance(sc, int) and 200 <= sc < 300),
+                "status_4xx": _count(lambda sc: isinstance(sc, int) and 400 <= sc < 500),
+                "failed_5xx": _count(lambda sc: isinstance(sc, int) and sc >= 500),
+                "timeout": _count(lambda sc: sc is None),
             },
             "verification": verification,
-            "passed": all(f["passed"] for f in findings)
-            and (verification is None or verification["passed"]),
+            "hints": hints,
+            "passed": passed,
         }
         print(_json.dumps(result, indent=2, default=str))
     else:
@@ -240,23 +325,19 @@ def run(
         asyncio.run(print_report(run_id))
         if verification:
             _print_verification(verification)
+    for hint in hints:
+        console.print(f"[yellow]Hint: {hint}[/yellow]")
 
-    if ci and verification and not verification["passed"]:
-        if output != "json":
-            console.print("[red]CI check failed: side-effect verification did not pass.[/red]")
+    if nothing_listening(deliveries):
+        raise typer.Exit(EXIT_NOTHING_LISTENING)
+
+    if ci and not passed:
+        reasons = [f["message"] for f in findings if f["severity"] != "info" and not f["passed"]]
+        if verification and not verification["passed"]:
+            reasons.append("side-effect verification did not pass")
+        for reason in reasons:
+            console.print(f"[red]CI check failed: {reason}[/red]")
         raise typer.Exit(1)
-
-    if ci and webhook_url:
-        from carbon.storage.repo import get_webhook_deliveries as _get_wh
-        deliveries = asyncio.run(_get_wh(run_id))
-        failures = [
-            d for d in deliveries
-            if d.get("status_code") is None or (isinstance(d.get("status_code"), int) and d["status_code"] >= 500)
-        ]
-        if failures:
-            if output != "json":
-                console.print(f"[red]CI check failed: {len(failures)} webhook(s) returned 5xx or timed out.[/red]")
-            raise typer.Exit(1)
 
 
 async def _do_run(
@@ -276,10 +357,12 @@ async def _do_run(
     client_verify_url: Optional[str] = None,
     client_verify_secret: str = "carbon",
     client_verify_format: str = "json",
-) -> tuple[str, Optional[dict]]:
+) -> tuple[str, Optional[dict], list[dict]]:
     await ensure_db()
-    run_id = await create_run(scenario_name, provider, plan.parameters)
+    # The run records the webhook format sent, not the (usually simulated) adapter
+    run_id = await create_run(scenario_name, webhook_provider, plan.parameters)
     verification = None
+    deliveries: list[dict] = []
     try:
         await run_plan(plan, run_id, provider, adapter)
         if webhook_url:
@@ -311,6 +394,9 @@ async def _do_run(
             if verify_cmd:
                 after = read_counter(verify_cmd)
                 verification = evaluate(before, after, deliveries, verify_event, client_calls=client_calls)
+            # Graded checks: how the handler responded
+            for f in evaluate_deliveries(deliveries, webhook_signature):
+                await insert_finding(run_id, f["check"], f["severity"], f["passed"], f["message"], f["details"])
         await run_validations(run_id)
         if callback_url:
             result = await post_run_callback(run_id, callback_url)
@@ -321,7 +407,7 @@ async def _do_run(
     except Exception as e:
         await update_run_status(run_id, "failed")
         raise e
-    return run_id, verification
+    return run_id, verification, deliveries
 
 
 def _print_verification(v: dict) -> None:
@@ -341,7 +427,7 @@ def _print_verification(v: dict) -> None:
 def replay(
     run_id: str = typer.Argument(..., help="Run ID to replay webhooks from"),
     webhook_url: str = typer.Option(..., "--webhook-url", help="Target URL to replay webhooks to"),
-    provider: str = typer.Option("mock", "--provider", "-p", help="Provider for signing"),
+    provider: Provider = typer.Option(Provider.mock, "--provider", "-p", help="Provider for signing"),
     webhook_secret: Optional[str] = typer.Option(None, "--webhook-secret", help="Secret for signing"),
 ) -> None:
     """Replay webhook payloads from a previous run."""
@@ -351,7 +437,7 @@ def replay(
             run_id,
             target_url=webhook_url,
             secret=webhook_secret or "carbon",
-            provider=provider,
+            provider="razorpay" if provider == Provider.mock else provider.value,
         )
     deliveries = asyncio.run(_replay())
     if not deliveries:
@@ -365,21 +451,18 @@ def replay(
 
 @app.command()
 def report(
-    run_id: str = typer.Argument(..., help="Run ID from a previous run"),
-    format: str = typer.Option("terminal", "--format", help="Output format: terminal or html"),
+    run_id: Optional[str] = typer.Argument(None, help="Run ID from a previous run"),
+    run_id_opt: Optional[str] = typer.Option(None, "--run-id", help="Same as the RUN_ID argument"),
+    format: ReportFormat = typer.Option(ReportFormat.terminal, "--format", help="Output format"),
 ) -> None:
     """Show report for a run."""
-    if format == "pdf":
-        console.print(
-            "[yellow]PDF export is a Carbon Layer Pro feature.[/yellow]\n"
-            "[dim]Pro includes PDF reports, scheduled runs, compliance dashboards, and more.[/dim]\n"
-            "[dim]Join the waitlist → pritom14.github.io/carbon-layer/waitlist[/dim]"
-        )
-        raise typer.Exit(0)
-    if format == "html":
-        import asyncio as _asyncio
+    run_id = run_id or run_id_opt
+    if not run_id:
+        console.print("[red]Pass a run id: carbon report <run_id>[/red]")
+        raise typer.Exit(2)
+    if format == ReportFormat.html:
         from pathlib import Path
-        html = _asyncio.run(generate_html_report(run_id))
+        html = asyncio.run(generate_html_report(run_id))
         out_path = Path(f"carbon_report_{run_id}.html")
         out_path.write_text(html, encoding="utf-8")
         console.print(f"Report written to {out_path}")

@@ -93,10 +93,13 @@ carbon scenarios-list
 carbon run dispute-spike --provider mock
 
 # View the report (use the run_id from the output above)
-carbon report --run-id <run_id>
+carbon report <run_id>
+
+# Check the installed version
+carbon --version
 ```
 
-No payment gateway account needed. The mock adapter simulates the full payment lifecycle locally.
+No payment gateway account needed. Carbon simulates the payment lifecycle locally and sends provider-format signed webhooks. Without `--webhook-url` nothing of yours is tested: the report says so, and the simulator counts it shows are marked `info` (they never pass or fail a run).
 
 ---
 
@@ -147,7 +150,7 @@ Use `--set` multiple times for multiple parameters. Unknown keys are ignored wit
 Export a shareable HTML report after any run:
 
 ```bash
-carbon report --run-id <run_id> --format html
+carbon report <run_id> --format html   # --run-id <run_id> also works
 ```
 
 Writes `carbon_report_<run_id>.html` to the current directory. Self-contained, no external dependencies — safe to share with your team or attach to an incident report.
@@ -234,6 +237,10 @@ carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/web
 
 Options: `valid` (default), `missing`, `corrupted`, `wrong_secret`.
 
+With `missing`, `corrupted` or `wrong_secret`, your handler must reject every webhook with 400, 401 or 403. Any 2xx response is a failure: the report shows `rejects_bad_signatures` as failed ("handler accepted N unsigned webhooks"), the JSON output has `"passed": false`, and `--ci` exits 1. Only the signature header is removed or corrupted; timestamp and version headers (Cashfree, Stripe's `t=`) are left intact so the handler fails on the signature check itself.
+
+If more than 90% of validly signed webhooks get 401/403, Carbon prints a hint that your `--webhook-secret` probably differs from the handler's (the default is `carbon`). If nothing is listening on `--webhook-url`, it says so and exits 3.
+
 ---
 
 ## Webhook Replay
@@ -248,7 +255,7 @@ carbon replay <run_id> --webhook-url http://localhost:8000/webhooks
 
 ## CI/CD Integration
 
-Use `--ci` to fail the build if any webhook returned 5xx or timed out:
+Use `--ci` to exit 1 when a graded check fails: a webhook returned 5xx or got no response, a bad signature was accepted with 2xx (see `--webhook-signature`), or `--verify-cmd` found duplicate or lost processing. Exit code 2 means bad usage (e.g. an unknown `--provider`), 3 means nothing was listening on `--webhook-url`.
 
 ```bash
 carbon run dispute-spike --provider mock \
@@ -275,7 +282,7 @@ Pipe results to `jq`, Datadog, Slack, or any tool:
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --output json
 ```
 
-Returns structured JSON with run status, findings, webhook delivery stats, and overall pass/fail.
+Stdout is exactly one JSON document (all other output goes to stderr), so `| jq` works. It has the run status, `provider`, `webhook_format`, `adapter` (`simulated` unless real Stripe/Cashfree keys were used), findings (simulator counts are flagged `"informational": true`), webhook delivery stats, hints, and overall pass/fail.
 
 ### Example GitHub Actions workflow
 
@@ -301,12 +308,11 @@ Carbon Layer generates provider-specific webhook payloads with correct signing f
 ```bash
 carbon run dispute-spike \
   --provider razorpay \
-  --api-key your_test_key \
-  --api-secret your_test_secret \
-  --webhook-url https://your-app.com/webhooks
+  --webhook-url https://your-app.com/webhooks \
+  --webhook-secret your_webhook_secret
 ```
 
-Or set `RAZORPAY_API_KEY` and `RAZORPAY_API_SECRET` as environment variables.
+No Razorpay keys needed. Razorpay's API can't create payments or disputes server-side, so payments are always simulated locally; if `RAZORPAY_API_KEY`/`RAZORPAY_API_SECRET` are set, Carbon says once that it ignores them.
 
 ### Stripe
 
@@ -336,12 +342,11 @@ Or set `CASHFREE_CLIENT_ID` and `CASHFREE_CLIENT_SECRET` as environment variable
 ```bash
 carbon run dispute-spike \
   --provider juspay \
-  --juspay-key your_api_key \
-  --juspay-merchant-id your_merchant_id \
-  --webhook-url https://your-app.com/webhooks
+  --webhook-url https://your-app.com/webhooks \
+  --webhook-secret your_api_key
 ```
 
-Or set `JUSPAY_API_KEY` and `JUSPAY_MERCHANT_ID` as environment variables.
+No Juspay credentials needed: Juspay payments can't be created or captured server-side, so they are always simulated locally (Juspay keys, if set, are ignored).
 
 ### Hyperswitch
 
