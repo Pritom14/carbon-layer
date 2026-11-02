@@ -1,8 +1,18 @@
+# UPI payment pending, order cancelled by the shop's timeout, then the bank confirms hours
+# later and the gateway sends payment.captured for the same payment.
+# Paytm: "Paytm polls the transaction status from bank for next 72 hours"
+#   (https://paytmpayments.com/docs/late-notification)
+# Razorpay late authorization: "payment.authorized" arrives when a late payment is authorized
+#   (https://razorpay.com/docs/payments/payments/late-authorisation/handle/)
+
 name: upi-timeout
 description: >
-  Simulates UPI payment timeouts where the payment gateway never receives
-  a terminal status from the UPI network. Tests whether your handler detects
-  stuck payments and triggers reconciliation.
+  UPI payments that time out and then succeed later. The gateway reports the payment
+  failed (Razorpay error reason payment_timed_out) and the shop cancels the order, on
+  that event or with its own pending-order timeout. Then the bank confirms and
+  payment.captured arrives for the same payment (late authorization). A cancelled
+  order whose payment was captured must be refunded or reinstated. Run it with
+  --verify-cmd counting cancelled-but-paid orders: the count must not grow.
 
 category: upi
 
@@ -13,13 +23,18 @@ parameters:
   timeout_rate:
     default: 0.3
     description: Fraction of payments that time out (e.g. 0.3 = 30%)
+  late_delay_s:
+    default: 1
+    description: >-
+      Seconds between the timeout and the late payment.captured (hours in production; raise
+      it above your shop's own pending-order timeout if it cancels on a timer)
   avg_order_value_paise:
     default: 50000
     description: Average order value in paise (500 INR)
 
 phases:
   - name: baseline
-    description: Create orders and attempt UPI payments
+    description: Create orders and attempt UPI payments; timed-out ones are reported failed
     actions:
       - create_orders:
           count: "${baseline_orders}"
@@ -27,8 +42,18 @@ phases:
       - create_payments:
           for_each: orders
           success_rate: "${1 - timeout_rate}"
+          method: upi
+          failure_reason: payment_timed_out
       - capture_payments:
           for_each: successful_payments
+
+  - name: late-capture
+    description: The bank confirms the timed-out payments; payment.captured arrives late
+    depends_on: baseline
+    actions:
+      - late_events:
+          for_each: failed_payments
+          state: captured
 
 validations:
   - check: orders_count
@@ -47,3 +72,10 @@ findings:
   - condition: "payment_success_rate < 0.5"
     message: "Very high failure rate; check if success_rate parameter is too low."
     severity: low
+
+verify:
+  expect: unchanged
+  counts: cancelled orders with a captured, unrefunded payment
+  fix: >-
+    when payment.captured arrives for a cancelled order, refund the payment or reinstate the
+    order; never just answer 200

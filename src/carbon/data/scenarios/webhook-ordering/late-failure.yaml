@@ -1,0 +1,65 @@
+# A paid order must stay paid when a payment.failed for the same payment arrives later.
+# Real-world report: https://github.com/Lemmecode-com/smart-college-mern/issues/194
+# ("a late or retried payment.failed could revert a PAID installment to PENDING").
+
+name: late-failure
+description: >
+  Every payment is captured, then a payment.failed for the same payment arrives
+  later (a retried or delayed event). For a share of payments the two arrive the
+  other way round: payment.failed first, payment.captured after. Run it with
+  --verify-cmd counting orders that are not paid: the count must not grow.
+
+category: webhook_ordering
+
+parameters:
+  baseline_orders:
+    default: 20
+    description: Number of orders (each gets one captured payment)
+  reorder_rate:
+    default: 0.25
+    description: Share of payments whose payment.failed arrives before payment.captured
+  late_delay_s:
+    default: 0.5
+    description: Seconds between delivery batches (the late event arrives after this)
+  avg_order_value_paise:
+    default: 50000
+    description: Average order value in paise
+
+phases:
+  - name: pay
+    description: Orders paid and captured
+    actions:
+      - create_orders:
+          count: "${baseline_orders}"
+          amount_paise: "${avg_order_value_paise}"
+      - create_payments:
+          for_each: orders
+          success_rate: 1.0
+      - capture_payments:
+          for_each: successful_payments
+
+  - name: late
+    description: A payment.failed for every captured payment, delivered after the capture (or before it, for reorder_rate of them)
+    depends_on: pay
+    actions:
+      - late_events:
+          for_each: captured_payments
+          state: failed
+          reorder_rate: "${reorder_rate}"
+
+validations:
+  - check: orders_count
+    description: Orders created
+    expected: ">= ${baseline_orders}"
+    severity: high
+  - check: payments_captured_count
+    description: Every payment captured before its late failure
+    expected: ">= ${baseline_orders}"
+    severity: high
+
+verify:
+  expect: unchanged
+  counts: orders not paid
+  fix: >-
+    ignore payment.failed for a payment already captured, and let payment.captured win when it
+    arrives after a failure: an order only moves forward, never back
