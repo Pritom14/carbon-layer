@@ -62,6 +62,9 @@ def parse_scenario(content: str | dict) -> Scenario:
     findings = data.get("findings", [])
     if not isinstance(findings, list):
         findings = []
+    verify = data.get("verify") or {}
+    if not isinstance(verify, dict):
+        verify = {}
     return Scenario(
         name=name,
         description=description,
@@ -70,4 +73,5 @@ def parse_scenario(content: str | dict) -> Scenario:
         phases=phases,
         validations=validations,
         findings=findings,
+        verify=verify,
     )

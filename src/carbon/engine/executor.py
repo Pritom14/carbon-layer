@@ -19,6 +19,26 @@ from carbon.storage.repo import (
     update_action_result,
     update_run_status,
 )
+from carbon.webhook.payloads import CARBON_META_KEY, is_followup
+
+
+# Error fields for failed payments, in Razorpay's payment entity format
+_FAILURE_FIELDS = {
+    "generic": {
+        "error_code": "BAD_REQUEST_ERROR",
+        "error_description": "Payment failed",
+        "error_source": "bank",
+        "error_reason": "payment_failed",
+    },
+    # Razorpay UPI error list: payment_timed_out, "Customer Exceeded Payment Time Limit"
+    # (https://razorpay.com/docs/errors/payments/upi)
+    "payment_timed_out": {
+        "error_code": "BAD_REQUEST_ERROR",
+        "error_description": "Customer Exceeded Payment Time Limit",
+        "error_source": "customer",
+        "error_reason": "payment_timed_out",
+    },
+}
 
 
 def _entity_row(local_id: str, entity_type: str, remote_id: str, state: str | None, metadata: dict | None) -> dict:
@@ -51,15 +71,22 @@ async def _run_step(
     count_param = params.get("count")
     refs: list[str] = []
     if for_each:
-        type_map = {"orders": "order", "successful_payments": "payment", "captured_payments": "payment"}
+        type_map = {
+            "orders": "order",
+            "successful_payments": "payment",
+            "captured_payments": "payment",
+            "failed_payments": "payment",
+        }
         etype = type_map.get(for_each, for_each.rstrip("s") if for_each.endswith("s") else for_each)
         allowed_states: tuple[str, ...] | None = None
         if for_each == "successful_payments":
             allowed_states = ("authorized", "captured")
         elif for_each == "captured_payments":
             allowed_states = ("captured",)
+        elif for_each == "failed_payments":
+            allowed_states = ("failed",)
         for local_id, info in entity_map.items():
-            if info.get("entity_type") != etype:
+            if info.get("entity_type") != etype or is_followup(info):
                 continue
             if allowed_states is not None:
                 s = (info.get("state") or "").lower().strip()
@@ -83,6 +110,15 @@ async def _run_step(
         if payment_refs:
             n = min(int(step.params.get("count", 1)), len(payment_refs))
             refs = list(random.sample(payment_refs, n))
+
+    if step.action_type == "duplicate_payments" and refs:
+        n = max(0, min(len(refs), int(round(len(refs) * float(params.get("rate", 1.0))))))
+        refs = sorted(random.sample(refs, n))
+
+    if step.action_type == "late_events" and refs:
+        # These late events arrive *before* the original instead (delivery reordered)
+        n = max(0, min(len(refs), int(round(len(refs) * float(params.get("reorder_rate", 0.0))))))
+        params["_before_refs"] = set(random.sample(refs, n))
 
     if step.action_type == "create_payments" and refs:
         # Exact success count (random which ones) so rate-based validations aren't flaky
@@ -139,7 +175,33 @@ async def _execute_one(
         else:
             success = random.random() < float(params.get("success_rate", 1.0))
         out = await adapter.create_payment(order_remote_id, {"success": success})
+        if params.get("method"):
+            out = {**out, "method": params["method"]}
+        if not success and params.get("failure_reason"):
+            out = {**out, **_FAILURE_FIELDS.get(params["failure_reason"], {"error_reason": params["failure_reason"]})}
         return [_entity_row(f"payment_{ref}", "payment", out.get("id", ""), out.get("status", "authorized"), out)]
+
+    if action_type == "duplicate_payments" and ref:
+        # A second payment for the same order: a double click, or the client retrying checkout
+        info = entity_map.get(ref, {})
+        order_id = (info.get("metadata") or {}).get("order_id") or ""
+        amount = _entity_amount(entity_map, ref) or 250000
+        created = await adapter.create_payment(order_id, {"success": True})
+        out = await adapter.capture_payment(created.get("id", ""), amount)
+        out = {**created, **(out or {}), "order_id": order_id}
+        return [_entity_row(f"{ref}_second", "payment", out.get("id", ""), "captured", out)]
+
+    if action_type == "late_events" and ref:
+        # Another webhook about the same payment, with a different state, delivered later
+        info = entity_map.get(ref, {})
+        state = str(params.get("state", "failed")).lower()
+        meta = {k: v for k, v in (info.get("metadata") or {}).items() if not k.startswith("error_")}
+        meta.update(status=state, captured=state == "captured")
+        if state == "failed":
+            meta.update(_FAILURE_FIELDS.get(params.get("failure_reason", ""), _FAILURE_FIELDS["generic"]))
+        stage = 0 if ref in params.get("_before_refs", ()) else int(params.get("stage", 2))
+        meta[CARBON_META_KEY] = {"stage": stage, "followup_of": ref}
+        return [_entity_row(f"late_{state}_{ref}", "payment", info.get("remote_id") or "", state, meta)]
 
     if action_type == "capture_payments" and ref:
         payment_remote_id = entity_map.get(ref, {}).get("remote_id") or ref

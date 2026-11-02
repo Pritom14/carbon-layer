@@ -40,3 +40,5 @@ class Scenario:
     phases: list[Phase] = field(default_factory=list)
     validations: list[Validation] = field(default_factory=list)
     findings: list[dict] = field(default_factory=list)
+    # Defaults for --verify-cmd: {"expect": "acked"|"unchanged", "counts": str, "fix": str}
+    verify: dict[str, Any] = field(default_factory=dict)

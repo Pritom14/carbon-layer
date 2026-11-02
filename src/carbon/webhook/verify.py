@@ -32,12 +32,17 @@ def read_counter(cmd: str, timeout_s: float = 60.0) -> float:
         raise VerifyError(f"--verify-cmd must print a number, got: {lines[-1][:80]!r}") from e
 
 
+EXPECT_ACKED = "acked"
+EXPECT_UNCHANGED = "unchanged"
+
+
 def evaluate(
     before: float,
     after: float,
     deliveries: list[dict],
     event_type: str,
     client_calls: list[dict] | None = None,
+    burst: int = 1,
 ) -> dict:
     """Compare observed counter change with unique acknowledged events of event_type.
 
@@ -71,6 +76,12 @@ def evaluate(
         message = f"{event_type}: {expected} unique {unit} caused {observed:g} side effects; handler is not idempotent"
         if client_calls is not None:
             message += " (the webhook and the client verify call both apply the effect; key it on the payment id)"
+        elif burst > 1:
+            message += (
+                f" ({burst} copies arrived at the same moment and each passed an 'already processed?' "
+                "check before any was saved: a check-then-insert race. Put a unique constraint on "
+                "the event or payment id and insert with ON CONFLICT DO NOTHING)"
+            )
 
     else:
         verdict = "lost"
@@ -79,6 +90,7 @@ def evaluate(
             f"{observed:g} side effects; events were acked without being processed"
         )
     return {
+        "mode": EXPECT_ACKED,
         "event_type": event_type,
         "deliveries": sent,
         "unique_events_acked": expected,
@@ -88,5 +100,34 @@ def evaluate(
         "observed_change": observed,
         "verdict": verdict,
         "passed": verdict == "pass",
+        "message": message,
+    }
+
+
+def evaluate_unchanged(
+    before: float,
+    after: float,
+    deliveries: list[dict],
+    counts: str = "records in a bad state",
+    fix: str | None = None,
+) -> dict:
+    """The command counts records in a bad state (an order paid twice, a cancelled order that
+    was paid); delivering the scenario's webhooks must not add any."""
+    change = after - before
+    passed = change <= 0
+    message = f"no new {counts}" if passed else f"{change:g} new {counts}"
+    return {
+        "mode": EXPECT_UNCHANGED,
+        "event_type": None,
+        "deliveries": len(deliveries),
+        "unique_events_acked": len({d.get("provider_event_id") for d in deliveries if d.get("ok")} - {None}),
+        "client_verify_calls": None,
+        "before": before,
+        "after": after,
+        "observed_change": change,
+        "counts": counts,
+        "fix": None if passed else fix,
+        "verdict": "pass" if passed else "bad_state",
+        "passed": passed,
         "message": message,
     }

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import random
 import time
 import uuid
 from datetime import datetime
@@ -144,6 +145,8 @@ async def _post_one(
             "response_body": response_body,
             "sent_at": sent_at,
             "attempt": event.get("attempt"),
+            "copy": event.get("copy"),
+            "stage": event.get("stage", 1),
             "provider_event_id": event.get("provider_event_id"),
             "payload": json.dumps(event["payload"], separators=(",", ":"), sort_keys=True),
         }
@@ -173,6 +176,61 @@ def _apply_signature_mode(headers: dict[str, str], mode: str) -> dict[str, str]:
     return headers
 
 
+def _ordered(events: list[dict], order: str) -> list[dict]:
+    if order == "reverse":
+        return list(reversed(events))
+    if order == "random":
+        shuffled = list(events)
+        random.shuffle(shuffled)
+        return shuffled
+    return list(events)
+
+
+async def _deliver_batch(
+    client: httpx.AsyncClient,
+    events: list[dict],
+    *,
+    target_url: str,
+    timeout_s: float,
+    secret: str,
+    provider: str,
+    signature_mode: str,
+    concurrency: int,
+    burst: int,
+) -> list[dict]:
+    """POST a batch of events. With burst > 1, every event goes out burst times at the same instant."""
+    if burst <= 1:
+        sem = asyncio.Semaphore(max(1, int(concurrency)))
+        return list(await asyncio.gather(*[
+            _post_one(client, sem, target_url, e, timeout_s, secret, provider, signature_mode=signature_mode)
+            for e in events
+        ]))
+
+    # A few events at a time; the copies of one event are released together, so a handler
+    # that checks "already processed?" before inserting sees every copy pass the check.
+    groups = asyncio.Semaphore(max(1, int(concurrency) // burst))
+
+    async def fire(event: dict) -> list[dict]:
+        async with groups:
+            gate = asyncio.Event()
+            unlimited = asyncio.Semaphore(burst)
+
+            async def one(copy: dict) -> dict:
+                await gate.wait()
+                return await _post_one(
+                    client, unlimited, target_url, copy, timeout_s, secret, provider,
+                    signature_mode=signature_mode,
+                )
+
+            tasks = [asyncio.create_task(one({**event, "copy": k + 1})) for k in range(burst)]
+            await asyncio.sleep(0)  # every copy is waiting at the gate
+            gate.set()
+            return list(await asyncio.gather(*tasks))
+
+    nested = await asyncio.gather(*[fire(e) for e in events])
+    return [d for group in nested for d in group]
+
+
 async def send_webhooks(
     run_id: str,
     *,
@@ -185,15 +243,21 @@ async def send_webhooks(
     repeat: int = 1,
     order: str = "sequence",
     signature_mode: str = "valid",
+    burst: int = 1,
+    stage_delay_s: float = 0.0,
 ) -> list[dict]:
     """
     Build provider-format webhooks from entity_map, POST them to target_url,
     and record delivery attempts in webhook_deliveries.
 
     Args:
-        repeat: Fire each webhook N times (test idempotency). Default 1.
-        order: 'sequence' (default), 'reverse', or 'random'.
+        repeat: Deliver each webhook N times. Each repeat is a later retry: round k+1 starts
+            after every delivery of round k got its response, so copies never overlap.
+        order: 'sequence' (default), 'reverse', or 'random' (applied within each round).
         signature_mode: 'valid' (default), 'missing', 'corrupted', or 'wrong_secret'.
+        burst: Send each webhook N times at the same instant (parallel duplicates).
+        stage_delay_s: Pause between delivery stages. Scenarios put late events (a
+            payment.failed after payment.captured, a late capture) in later stages.
     """
     conn = await get_connection()
     try:
@@ -206,39 +270,29 @@ async def send_webhooks(
         for e in events:
             e.setdefault("provider_event_id", f"evt_{uuid.uuid4().hex[:14]}")
 
-        # Duplicate: repeat each event N times
-        if repeat > 1:
-            expanded = []
-            for e in events:
-                for attempt in range(repeat):
-                    copy = dict(e)
-                    copy["attempt"] = attempt + 1
-                    expanded.append(copy)
-            events = expanded
-
-        # Reorder events
-        import random as _random
-        if order == "reverse":
-            events = list(reversed(events))
-        elif order == "random":
-            _random.shuffle(events)
-
         # Determine signing secret
         effective_secret = secret
         if signature_mode == "wrong_secret":
             effective_secret = "wrong_secret_" + secret
 
-        sem = asyncio.Semaphore(max(1, int(concurrency)))
-        async with httpx.AsyncClient() as client:
-            deliveries = await asyncio.gather(
-                *[
-                    _post_one(
-                        client, sem, target_url, e, timeout_s,
-                        effective_secret, provider, signature_mode=signature_mode,
+        deliveries: list[dict] = []
+        stages = sorted({e.get("stage", 1) for e in events})
+        limits = httpx.Limits(max_connections=max(100, 4 * burst), max_keepalive_connections=20)
+        async with httpx.AsyncClient(limits=limits) as client:
+            for i, stage in enumerate(stages):
+                if i and stage_delay_s > 0:
+                    await asyncio.sleep(stage_delay_s)
+                stage_events = [e for e in events if e.get("stage", 1) == stage]
+                for attempt in range(1, max(1, repeat) + 1):
+                    batch = [
+                        {**e, "attempt": attempt} if repeat > 1 else e
+                        for e in _ordered(stage_events, order)
+                    ]
+                    deliveries += await _deliver_batch(
+                        client, batch, target_url=target_url, timeout_s=timeout_s,
+                        secret=effective_secret, provider=provider, signature_mode=signature_mode,
+                        concurrency=concurrency, burst=burst,
                     )
-                    for e in events
-                ]
-            )
         await insert_webhook_deliveries_bulk(conn, run_id, target_url, deliveries)
         return deliveries
     finally:

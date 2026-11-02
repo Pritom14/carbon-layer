@@ -17,6 +17,7 @@ import dataclasses
 from carbon.compiler.compiler import render_expected
 from carbon.scenarios.registry import load_scenario
 from carbon.storage.repo import get_entity_map, get_run, insert_finding
+from carbon.webhook.payloads import is_followup
 
 INFO = "info"
 
@@ -33,6 +34,9 @@ METRIC_NAMES = frozenset({
 
 def _compute_metrics(entity_map: dict) -> dict[str, Any]:
     """Compute run metrics from entity_map for validation/findings."""
+    # Late events (a payment.failed after the capture, a late capture) are extra webhooks
+    # about payments already counted, not payments of their own.
+    entity_map = {k: v for k, v in entity_map.items() if not is_followup(v)}
     orders = [k for k, v in entity_map.items() if v.get("entity_type") == "order"]
     payments = [k for k, v in entity_map.items() if v.get("entity_type") == "payment"]
     captured = [
