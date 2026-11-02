@@ -368,7 +368,7 @@ class TestLateFailure:
         assert "Delivered in 3 batches" in out
         # 6 of 8 got payment.failed after the capture; the 2 reordered ones end paid
         assert "checker: 0 -> 6" in out
-        assert "State check: orders not paid (must not grow)" in out and "FAIL: 6 new orders not paid" in out
+        assert "State check: unpaid orders (must not grow)" in out and "FAIL: 6 new unpaid orders" in out
 
     def test_fixed_handler_keeps_orders_paid(self, shop):
         s, url = shop()

@@ -247,9 +247,9 @@ Options: `sequence` (default), `reverse`, `random`.
 By default `--verify-cmd` counts a side effect that must grow by exactly one per unique event your endpoint acknowledged (`--verify-expect acked`). Some bugs leave a bad state instead: an order credited twice, a paid order marked failed, a cancelled order whose money was kept. With `--verify-expect unchanged` the command counts records in a bad state, and the run fails if that count grows. The `late-failure`, `double-payment` and `upi-timeout` scenarios use `unchanged` by default, and print what to fix:
 
 ```
-State check: orders not paid (must not grow)
+State check: unpaid orders (must not grow)
   deliveries sent: 40   checker: 0 -> 15
-  FAIL: 15 new orders not paid
+  FAIL: 15 new unpaid orders
   Fix: ignore payment.failed for a payment already captured, and let payment.captured win when it arrives after a failure: an order only moves forward, never back
 ```
 
@@ -265,7 +265,7 @@ carbon run late-failure --provider razorpay \
   --verify-cmd "psql -tAc \"select count(*) from orders where status <> 'paid'\"" --ci
 ```
 
-Real run against a last-event-wins handler: `checker: 0 -> 15`, `FAIL: 15 new orders not paid` (the 15 whose failure came after the capture; the 5 reordered ones ended paid). The fixed handler only moves an order forward and passes with `0 -> 0`.
+Real run against a last-event-wins handler: `checker: 0 -> 15`, `FAIL: 15 new unpaid orders` (the 15 whose failure came after the capture; the 5 reordered ones ended paid). The fixed handler only moves an order forward and passes with `0 -> 0`.
 
 ### Two payments for one order (`double-payment`)
 

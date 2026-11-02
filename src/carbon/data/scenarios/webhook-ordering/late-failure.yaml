@@ -59,7 +59,7 @@ validations:
 
 verify:
   expect: unchanged
-  counts: orders not paid
+  counts: unpaid orders
   fix: >-
     ignore payment.failed for a payment already captured, and let payment.captured win when it
     arrives after a failure: an order only moves forward, never back
