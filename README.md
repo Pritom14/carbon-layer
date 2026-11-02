@@ -7,13 +7,13 @@
 
 Chaos engineering for payment flows.
 
-Every company processing payments tests the happy path — payment succeeds, order fulfilled — and ships. What breaks in production is everything else: dispute spikes your system doesn't respond to, refund storms that break reconciliation, gateway errors that leave orders stuck, webhook sequences your handlers were never tested against.
+Every company processing payments tests the happy path (payment succeeds, order fulfilled) and ships. What breaks in production is everything else: dispute spikes your system doesn't respond to, refund storms that break reconciliation, gateway errors that leave orders stuck, webhook sequences your handlers were never tested against.
 
 Carbon Layer lets you simulate these failure modes against your own integration before your customers encounter them. Run a scenario, point it at your webhook endpoint, and see exactly what your system handles and what it doesn't.
 
 ### Does your handler credit a payment twice?
 
-Razorpay, Stripe and Cashfree all deliver webhooks *at least once*, so the same `payment.captured` can arrive more than once. A handler that doesn't dedupe returns `200` every time — so status codes alone will never show the bug. Carbon Layer checks the side effect itself:
+Razorpay, Stripe and Cashfree all deliver webhooks *at least once*, so the same `payment.captured` can arrive more than once. A handler that doesn't dedupe returns `200` every time, so status codes alone will never show the bug. Carbon Layer checks the side effect itself:
 
 ```bash
 carbon run dispute-spike --provider razorpay \
@@ -28,7 +28,7 @@ Side-effect verification (payment.captured)
   FAIL: duplicate processing: payment.captured: 1000 unique events caused 3000 side effects; handler is not idempotent
 ```
 
-No gateway account needed — webhooks are generated locally and signed exactly like the real provider's (including Razorpay's `X-Razorpay-Event-Id`, the key you should dedupe on).
+No gateway account needed: webhooks are generated locally and signed exactly like the real provider's (including Razorpay's `X-Razorpay-Event-Id`, the key you should dedupe on).
 
 ---
 
@@ -40,7 +40,7 @@ No gateway account needed — webhooks are generated locally and signed exactly 
 pip install carbon-layer
 ```
 
-Works out of the box. Carbon Layer uses SQLite by default — data is stored in `~/.carbon/carbon.db`. Nothing else to install or configure.
+Works out of the box. Carbon Layer uses SQLite by default; data is stored in `~/.carbon/carbon.db`. Nothing else to install or configure.
 
 ### Option B: With PostgreSQL (if you already have it)
 
@@ -105,13 +105,13 @@ No payment gateway account needed. Carbon simulates the payment lifecycle locall
 
 ## Webhook Simulation
 
-The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires provider-specific webhook events — `payment.captured`, `payment_intent.succeeded`, `PAYMENT_SUCCESS_WEBHOOK`, `ORDER_SUCCEEDED`, and more — after the scenario runs. Payloads are signed exactly like real webhooks from each provider (Razorpay, Stripe, Cashfree, Juspay).
+The real value of Carbon Layer is testing your webhook handlers. Point it at your endpoint and it fires provider-specific webhook events (`payment.captured`, `payment_intent.succeeded`, `PAYMENT_SUCCESS_WEBHOOK`, `ORDER_SUCCEEDED`, and more) after the scenario runs. Payloads are signed exactly like real webhooks from each provider (Razorpay, Stripe, Cashfree, Juspay).
 
 ```bash
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
 ```
 
-The report shows how your endpoint responded for each event type — 2xx, 4xx, 5xx, or timeout. No payment gateway account required.
+The report shows how your endpoint responded for each event type: 2xx, 4xx, 5xx, or timeout. No payment gateway account required.
 
 ---
 
@@ -119,17 +119,19 @@ The report shows how your endpoint responded for each event type — 2xx, 4xx, 5
 
 | Scenario | What it tests |
 |----------|---------------|
-| `dispute-spike` | 15% dispute rate — does your system respond and submit evidence? |
-| `payment-decline-spike` | 30% payment failure rate — does your retry and order state logic hold? |
-| `refund-storm` | Mass refunds on captured payments — does reconciliation break? |
-| `flash-sale` | High order and payment volume — does throughput hold? |
-| `gateway-error-burst` | Intermittent gateway errors — are orders left in inconsistent state? |
-| `min-amount` | Minimum paise transactions — are edge-case amounts handled correctly? |
-| `max-amount` | Large-value transactions — are limits and approvals handled correctly? |
-| `upi-timeout` | UPI payments stuck without terminal status — does your reconciliation catch it? |
-| `vpa-not-found` | Invalid UPI VPA failures — does your handler distinguish VPA errors from general failures? |
-| `mandate-rejection` | UPI autopay mandate rejections — does your handler notify the customer? |
-| `settlement-delay` | Refunds on captured-but-unsettled payments — does reconciliation handle it? |
+| `dispute-spike` | 15% dispute rate: does your system respond and submit evidence? |
+| `payment-decline-spike` | 30% payment failure rate: does your retry and order state logic hold? |
+| `refund-storm` | Mass refunds on captured payments: does reconciliation break? |
+| `flash-sale` | High order and payment volume: does throughput hold? |
+| `gateway-error-burst` | Intermittent gateway errors: are orders left in inconsistent state? |
+| `min-amount` | Minimum paise transactions: are edge-case amounts handled correctly? |
+| `max-amount` | Large-value transactions: are limits and approvals handled correctly? |
+| `upi-timeout` | UPI payment times out, the order is cancelled, then `payment.captured` arrives late: is the money refunded or the order reinstated? |
+| `vpa-not-found` | Invalid UPI VPA failures: does your handler distinguish VPA errors from general failures? |
+| `mandate-rejection` | UPI autopay mandate rejections: does your handler notify the customer? |
+| `settlement-delay` | Refunds on captured-but-unsettled payments: does reconciliation handle it? |
+| `late-failure` | `payment.failed` arrives after `payment.captured` for the same payment (and the other way round): does a paid order stay paid? |
+| `double-payment` | Two captured payments for one order (double click, client retry): is the order credited once? |
 
 ---
 
@@ -153,7 +155,7 @@ Export a shareable HTML report after any run:
 carbon report <run_id> --format html   # --run-id <run_id> also works
 ```
 
-Writes `carbon_report_<run_id>.html` to the current directory. Self-contained, no external dependencies — safe to share with your team or attach to an incident report.
+Writes `carbon_report_<run_id>.html` to the current directory. Self-contained, no external dependencies, safe to share with your team or attach to an incident report.
 
 ---
 
@@ -169,9 +171,9 @@ Fire each webhook multiple times to test whether your handler processes duplicat
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-repeat 5
 ```
 
-Every repeat of an event carries the same event id (`X-Razorpay-Event-Id` for Razorpay; the payload `id` for Stripe/Juspay), just like a real provider retry.
+Every repeat of an event carries the same event id (`X-Razorpay-Event-Id` for Razorpay; the payload `id` for Stripe/Juspay), just like a real provider retry. Repeats go out as later retries: each round starts once every delivery of the previous round got its response, so two copies of one event never overlap. To send copies at the same instant, use `--webhook-concurrency` (below).
 
-A non-idempotent handler still answers `200`, so add `--verify-cmd` to check the actual side effect. It takes any shell command that prints a number — a SQL count, a `curl` to an internal stats endpoint, a Redis `GET`:
+A non-idempotent handler still answers `200`, so add `--verify-cmd` to check the actual side effect. It takes any shell command that prints a number: a SQL count, a `curl` to an internal stats endpoint, a Redis `GET`:
 
 ```bash
 carbon run dispute-spike --provider razorpay --webhook-url http://localhost:8000/webhooks \
@@ -210,6 +212,26 @@ FAIL: duplicate processing: payment.captured: 20 unique payments caused 40 side 
 
 The fix is a unique key on the effect itself (one credit row per `payment_id`), which covers both paths and redelivery. Use `--client-verify-format form` if your endpoint expects form fields instead of JSON.
 
+### Concurrent duplicates (check-then-insert races)
+
+At-least-once delivery means two copies of one event can land at the same moment: a gateway retry that overlaps a slow first attempt, or two workers pulling the same message. A handler that asks "already processed?" and then inserts passes every sequential retry and still credits twice when copies arrive together, because both pass the check before either has saved. `--webhook-concurrency N` sends every webhook N times at the same instant:
+
+```bash
+carbon run flash-sale --provider razorpay --set baseline_orders=20 \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --webhook-concurrency 5 --verify-cmd "psql -tAc 'select count(*) from wallet_credits'" --ci
+```
+
+Real run against a handler that checks for an existing credit, then inserts one (the same handler passes with `--webhook-repeat 5`):
+
+```
+Side-effect verification (payment.captured)
+  deliveries sent: 100   unique events acked: 20   counter: 0 -> 100 (change 100)
+  FAIL: duplicate processing: payment.captured: 20 unique events caused 100 side effects; handler is not idempotent (5 copies arrived at the same moment and each passed an 'already processed?' check before any was saved: a check-then-insert race. Put a unique constraint on the event or payment id and insert with ON CONFLICT DO NOTHING)
+```
+
+The fix is a unique constraint on the effect (one credit per payment or event id) with `INSERT ... ON CONFLICT DO NOTHING`, so the database turns away the second copy however the requests interleave. A lock in application code only covers one process. `--webhook-concurrency` combines with `--webhook-repeat` (N copies at once, in each retry round).
+
 ### Out-of-order delivery
 
 Gateways don't guarantee webhook order. Test with randomized or reversed delivery:
@@ -220,12 +242,63 @@ carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/web
 
 Options: `sequence` (default), `reverse`, `random`.
 
+### State checks (`--verify-expect unchanged`)
+
+By default `--verify-cmd` counts a side effect that must grow by exactly one per unique event your endpoint acknowledged (`--verify-expect acked`). Some bugs leave a bad state instead: an order credited twice, a paid order marked failed, a cancelled order whose money was kept. With `--verify-expect unchanged` the command counts records in a bad state, and the run fails if that count grows. The `late-failure`, `double-payment` and `upi-timeout` scenarios use `unchanged` by default, and print what to fix:
+
+```
+State check: unpaid orders (must not grow)
+  deliveries sent: 40   checker: 0 -> 15
+  FAIL: 15 new unpaid orders
+  Fix: ignore payment.failed for a payment already captured, and let payment.captured win when it arrives after a failure: an order only moves forward, never back
+```
+
+### Late `payment.failed` after `payment.captured` (`late-failure`)
+
+A `payment.failed` for a payment you already captured can still arrive: a retried event from an earlier failed attempt, or a delayed one. A handler where the last event wins moves the order from paid back to failed, and the customer who paid gets cancelled. This is a real bug report: in [Lemmecode-com/smart-college-mern#194](https://github.com/Lemmecode-com/smart-college-mern/issues/194) the audit found "a late or retried `payment.failed` could revert a PAID installment to PENDING".
+
+`late-failure` captures every payment, then sends a `payment.failed` for the same payment id in a later batch (`late_delay_s`, default 0.5 s). For a quarter of the payments (`reorder_rate`) the order is reversed: `payment.failed` first, `payment.captured` after, which catches the opposite bug, a handler that ignores a capture once it has seen a failure.
+
+```bash
+carbon run late-failure --provider razorpay \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --verify-cmd "psql -tAc \"select count(*) from orders where status <> 'paid'\"" --ci
+```
+
+Real run against a last-event-wins handler: `checker: 0 -> 15`, `FAIL: 15 new unpaid orders` (the 15 whose failure came after the capture; the 5 reordered ones ended paid). The fixed handler only moves an order forward and passes with `0 -> 0`.
+
+### Two payments for one order (`double-payment`)
+
+A double click, or a client that retries checkout after a timeout, creates two payments for one order. Each has its own payment id and its own `payment.captured` event, so deduping on the event id or the payment id lets both through and the order is credited twice. `double-payment` gives half the orders (`double_pay_rate`) a second captured payment:
+
+```bash
+carbon run double-payment --provider razorpay \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --verify-cmd "psql -tAc 'select count(*) from (select order_id from credits group by order_id having count(*) > 1) t'" --ci
+```
+
+The checker counts orders credited more than once and must stay at its starting value. The fix is a unique constraint on the order's credit, plus a refund of the second payment.
+
+### UPI timeouts that succeed later (`upi-timeout`)
+
+A UPI payment can time out for the customer and still succeed hours later. Paytm documents that it "polls the transaction status from bank for next 72 hours" and sends the final status when it arrives ([late notification](https://paytmpayments.com/docs/late-notification)). Razorpay documents late authorisation: a `payment.authorized` webhook arrives when a late payment is authorised, and uncaptured ones are refunded automatically ([late authorisation](https://razorpay.com/docs/payments/payments/late-authorisation/handle/)). If your account captures automatically, the capture and its `payment.captured` follow. By then many shops have cancelled the order and released the stock.
+
+`upi-timeout` times out 30% of UPI payments: Carbon sends `payment.failed` with Razorpay's UPI error reason `payment_timed_out`, your shop cancels the order (on that event, or with its own pending-order timeout), and after `late_delay_s` (default 1 s here, hours in production) `payment.captured` arrives for the same payment. A handler that answers 200 and ignores a capture for a cancelled order keeps the customer's money with nothing delivered.
+
+```bash
+carbon run upi-timeout --provider razorpay --set baseline_orders=20 \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --verify-cmd "psql -tAc \"select count(*) from orders o join payments p on p.order_id = o.id where o.status = 'cancelled' and p.status = 'captured' and p.id not in (select payment_id from refunds)\"" --ci
+```
+
+Real run against a handler that ignores captures for cancelled orders: `checker: 0 -> 6`, `FAIL: 6 new cancelled orders with a captured, unrefunded payment`. Refund the payment or reinstate the order. If your shop cancels on a timer, raise `--set late_delay_s=` above it.
+
 ### Signature verification
 
 Test whether your handler actually validates webhook signatures:
 
 ```bash
-# Missing signatures — should your handler reject these?
+# Missing signatures: should your handler reject these?
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --webhook-signature missing
 
 # Corrupted signatures
@@ -240,6 +313,44 @@ Options: `valid` (default), `missing`, `corrupted`, `wrong_secret`.
 With `missing`, `corrupted` or `wrong_secret`, your handler must reject every webhook with 400, 401 or 403. Any 2xx response is a failure: the report shows `rejects_bad_signatures` as failed ("handler accepted N unsigned webhooks"), the JSON output has `"passed": false`, and `--ci` exits 1. Only the signature header is removed or corrupted; timestamp and version headers (Cashfree, Stripe's `t=`) are left intact so the handler fails on the signature check itself.
 
 If more than 90% of validly signed webhooks get 401/403, Carbon prints a hint that your `--webhook-secret` probably differs from the handler's (the default is `carbon`). If nothing is listening on `--webhook-url`, it says so and exits 3.
+
+---
+
+## Gateway retry outlook
+
+A handler that times out or errors doesn't just lose one event. The gateway retries it, then gives up, and some gateways switch the endpoint off, after which every later event goes undelivered until someone re-enables it. Every run with `--webhook-url` ends with a projection of what the gateway would do with the failures it saw:
+
+```
+Gateway retry outlook (Razorpay)
+  WARNING: Razorpay would disable this endpoint after 24 hours
+  failed deliveries: 20 of 25 (80%): 20 too slow
+  20 answered 2xx after Razorpay's 5 s timeout (slowest 6.1 s); Razorpay counts them as failed and retries
+  failed on every delivery: payment.captured (20 of 20)
+  Razorpay retries a failed event with exponential backoff for 24 hours, and disables the webhook if it keeps failing for 24 hours, until you re-enable it in the Dashboard.
+  Once it is disabled, every later event for this endpoint goes undelivered.
+  Return 2xx first and do the slow work (emails, invoices, API calls) in a background job.
+  Source: https://razorpay.com/docs/webhooks/best-practices/
+```
+
+That is a real run of `carbon run refund-storm --provider razorpay --set baseline_orders=20 --webhook-url ... --ci` against a handler that emails the invoice before answering `payment.captured` (about 6 s). It answers 200 every time, and `--ci` still exits 1. The same handler with the email moved to a background worker gets `OK: Razorpay would keep this endpoint enabled`.
+
+How it is projected:
+
+- A delivery fails when it gets a non-2xx (3xx, 4xx or 5xx), no response, or a 2xx slower than the gateway's published timeout. For Razorpay Carbon waits 10 s, so a slow 2xx shows up as "too slow" instead of a bare timeout.
+- A failure is persistent when an event type fails on every delivery, or one event fails on 3 or more deliveries in a row (try `--webhook-repeat 3`). The gateway's retries would fail the same way, so it gives up on those events and, where documented, disables the endpoint. `--ci` fails (check `retry_outlook`).
+- Scattered failures are left to the retries. They still fail `webhook_delivery` when they are 5xx or timeouts.
+
+Each gateway's policy is a data table in [`retry_policy.py`](src/carbon/webhook/retry_policy.py), with the sentence each number comes from:
+
+| Gateway | Response timeout | Retries | Auto-disable | Source |
+|---|---|---|---|---|
+| Razorpay | 5 s | exponential backoff for 24 hours (intervals not published) | after 24 hours of failing | [best practices](https://razorpay.com/docs/webhooks/best-practices/) |
+| Stripe | not published | exponential backoff for up to 3 days in live mode; 3 times over a few hours in a sandbox | after "several days" (number not published: Carbon projects 3 days and says it is unconfirmed) | [webhooks](https://docs.stripe.com/webhooks#automatic-retries), [support](https://support.stripe.com/questions/why-is-stripe-trying-to-reach-my-webhook-endpoints) |
+| Cashfree | not published | 3 retries at 2, 10 and 30 minute intervals (default policy) | not documented for payment webhooks (Payouts V2 and Cashgram: after more than 5 consecutive failures) | [reliability](https://www.cashfree.com/docs/api-reference/webhooks/reliability-and-operations) |
+| Hyperswitch | not published | 16 retries over about 24 hours | not documented | [webhooks](https://docs.hyperswitch.io/hyperswitch-cloud/webhooks) |
+| Juspay | not published | not published | not published | no projection |
+
+Where a gateway publishes no timeout, Carbon keeps its own 5 s client timeout. `--output json` includes the projection as `retry_outlook`.
 
 ---
 
@@ -319,7 +430,7 @@ carbon replay <run_id> --webhook-url http://localhost:8000/webhooks
 
 ## CI/CD Integration
 
-Use `--ci` to exit 1 when a graded check fails: a webhook returned 5xx or got no response, a bad signature was accepted with 2xx (see `--webhook-signature`), or `--verify-cmd` found duplicate or lost processing. Exit code 2 means bad usage (e.g. an unknown `--provider`), 3 means nothing was listening on `--webhook-url`.
+Use `--ci` to exit 1 when a graded check fails: a webhook returned 5xx, got no response or answered after the gateway's published timeout, the [retry outlook](#gateway-retry-outlook) projects that the gateway would disable the endpoint or give up on events, a bad signature was accepted with 2xx (see `--webhook-signature`), or `--verify-cmd` found duplicate or lost processing or a new bad state. Exit code 2 means bad usage (e.g. an unknown `--provider`), 3 means nothing was listening on `--webhook-url`.
 
 ```bash
 carbon run dispute-spike --provider mock \
@@ -346,7 +457,7 @@ Pipe results to `jq`, Datadog, Slack, or any tool:
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks --output json
 ```
 
-Stdout is exactly one JSON document (all other output goes to stderr), so `| jq` works. It has the run status, `provider`, `webhook_format`, `adapter` (`simulated` unless real Stripe/Cashfree keys were used), findings (simulator counts are flagged `"informational": true`), webhook delivery stats, hints, and overall pass/fail.
+Stdout is exactly one JSON document (all other output goes to stderr), so `| jq` works. It has the run status, `provider`, `webhook_format`, `adapter` (`simulated` unless real Stripe/Cashfree keys were used), findings (simulator counts are flagged `"informational": true`), webhook delivery stats (including `slow`: 2xx after the gateway's timeout), `verification` (with `mode`: `acked` or `unchanged`), `retry_outlook`, hints, and overall pass/fail.
 
 ### Example GitHub Actions workflow
 
@@ -424,7 +535,7 @@ carbon run refund-storm --provider hyperswitch \
   --verify-cmd "psql -tAc 'select count(*) from fulfilments'" --verify-event payment_succeeded
 ```
 
-No Hyperswitch deployment needed — the payment flow is simulated locally. Repeats of an event share the same `event_id`, so this also tests your dedupe.
+No Hyperswitch deployment needed: the payment flow is simulated locally. Repeats of an event share the same `event_id`, so this also tests your dedupe.
 
 ### Mock (no credentials needed)
 
@@ -432,19 +543,19 @@ No Hyperswitch deployment needed — the payment flow is simulated locally. Repe
 carbon run dispute-spike --provider mock --webhook-url http://localhost:8000/webhooks
 ```
 
-Mock mode simulates the full payment lifecycle locally. Use this if you don't have test credentials — all 11 scenarios work out of the box.
+Mock mode simulates the full payment lifecycle locally. Use this if you don't have test credentials; all 13 scenarios work out of the box.
 
 ---
 
 ## Carbon Layer Pro (coming soon)
 
-The open-source CLI covers 11 scenarios, 5 payment gateways, and webhook resilience testing. We're building a hosted Pro tier for teams that need more:
+The open-source CLI covers 13 scenarios, 5 payment gateways, and webhook resilience testing. We're building a hosted Pro tier for teams that need more:
 
-- **Scheduled runs** — run scenarios on a cron, get notified when your handlers regress
-- **PDF reports** — export compliance-ready reports for audits and stakeholders
-- **Compliance dashboards** — track webhook handler reliability over time
-- **Pro scenarios** — RBI compliance checks, PCI readiness suite, 10k TPS load tests, multi-gateway failover, settlement reconciliation
-- **Team management** — shared runs, role-based access, audit logs
+- **Scheduled runs:** run scenarios on a cron, get notified when your handlers regress
+- **PDF reports:** export compliance-ready reports for audits and stakeholders
+- **Compliance dashboards:** track webhook handler reliability over time
+- **Pro scenarios:** RBI compliance checks, PCI readiness suite, 10k TPS load tests, multi-gateway failover, settlement reconciliation
+- **Team management:** shared runs, role-based access, audit logs
 
 The free CLI stays free and open-source (Apache 2.0). Pro is a separate hosted product.
 
@@ -454,4 +565,4 @@ Join the waitlist: [pritom14.github.io/carbon-layer/waitlist](https://pritom14.g
 
 ## License
 
-Apache 2.0 — see [LICENSE](./LICENSE).
+Apache 2.0, see [LICENSE](./LICENSE).

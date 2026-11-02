@@ -33,10 +33,18 @@ def nothing_listening(deliveries: list[dict]) -> bool:
     return bool(deliveries) and all(_is_connect_error(d) for d in deliveries)
 
 
-def evaluate_deliveries(deliveries: list[dict], signature_mode: str = "valid") -> list[dict]:
+def evaluate_deliveries(
+    deliveries: list[dict],
+    signature_mode: str = "valid",
+    timeout_s: Optional[float] = None,
+    gateway: str = "the gateway",
+) -> list[dict]:
     """
     Grade webhook deliveries. Returns findings as dicts with keys
     check, severity, passed, message, details.
+
+    timeout_s: the gateway's published response timeout; a 2xx slower than that is a
+    failed delivery to the gateway (it retries), so it is graded as one.
     """
     if not deliveries:
         return []
@@ -61,16 +69,27 @@ def evaluate_deliveries(deliveries: list[dict], signature_mode: str = "valid") -
             "details": {"signature_mode": signature_mode, "expected": "400/401/403", "got": f"{len(accepted)} x 2xx"},
         })
 
-    errors = [d for d in deliveries if _is_5xx_or_timeout(d)]
+    def _too_slow(d: dict) -> bool:
+        return (
+            timeout_s is not None and _is_2xx(d) and (d.get("duration_ms") or 0) > timeout_s * 1000
+        )
+
+    errors = [d for d in deliveries if _is_5xx_or_timeout(d) or _too_slow(d)]
+    slow = sum(1 for d in deliveries if _too_slow(d))
+    if slow:
+        message = (
+            f"{len(errors)} of {total} webhooks returned 5xx, got no response, or answered after "
+            f"{gateway}'s {timeout_s:g} s timeout ({slow} too slow)"
+        )
+    elif errors:
+        message = f"{len(errors)} of {total} webhooks returned 5xx or got no response (timeout/connection error)"
+    else:
+        message = f"no 5xx or missing responses across {total} webhooks"
     findings.append({
         "check": "webhook_delivery",
         "severity": "high",
         "passed": not errors,
-        "message": (
-            f"{len(errors)} of {total} webhooks returned 5xx or got no response (timeout/connection error)"
-            if errors
-            else f"no 5xx or missing responses across {total} webhooks"
-        ),
+        "message": message,
         "details": {"expected": "no 5xx/timeout", "got": f"{len(errors)} of {total}"},
     })
     return findings

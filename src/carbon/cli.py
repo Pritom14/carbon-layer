@@ -22,7 +22,15 @@ from carbon.storage.repo import create_run, ensure_db, insert_finding, update_ru
 from carbon.validator import run_validations
 from carbon.webhook import replay_webhooks, send_webhooks
 from carbon.webhook.checks import delivery_hints, evaluate_deliveries, nothing_listening, overall_passed
-from carbon.webhook.verify import VerifyError, evaluate, read_counter
+from carbon.webhook.retry_policy import client_timeout_s, gateway_timeout_s, outlook_finding, project
+from carbon.webhook.verify import (
+    EXPECT_ACKED,
+    EXPECT_UNCHANGED,
+    VerifyError,
+    evaluate,
+    evaluate_unchanged,
+    read_counter,
+)
 
 app = typer.Typer(
     name="carbon",
@@ -57,6 +65,11 @@ class SignatureMode(str, Enum):
     missing = "missing"
     corrupted = "corrupted"
     wrong_secret = "wrong_secret"
+
+
+class VerifyExpect(str, Enum):
+    acked = "acked"
+    unchanged = "unchanged"
 
 
 class OutputFormat(str, Enum):
@@ -138,7 +151,17 @@ def run(
         help="Exit with code 1 if any graded check fails: a 5xx/timeout, a bad signature accepted "
         "with 2xx, or a failed --verify-cmd",
     ),
-    webhook_repeat: int = typer.Option(1, "--webhook-repeat", help="Fire each webhook N times to test idempotency"),
+    webhook_repeat: int = typer.Option(
+        1,
+        "--webhook-repeat",
+        help="Deliver each webhook N times, as later retries (each round after the previous one finished)",
+    ),
+    webhook_concurrency: int = typer.Option(
+        1,
+        "--webhook-concurrency",
+        help="Deliver each webhook N times at the same instant, to expose check-then-insert races "
+        "that sequential retries miss",
+    ),
     webhook_order: WebhookOrder = typer.Option(
         WebhookOrder.sequence, "--webhook-order", help="Webhook delivery order"
     ),
@@ -158,6 +181,14 @@ def run(
     ),
     verify_event: str = typer.Option(
         "payment.captured", "--verify-event", help="Event type whose side effect --verify-cmd counts"
+    ),
+    verify_expect: Optional[VerifyExpect] = typer.Option(
+        None,
+        "--verify-expect",
+        help="acked: the --verify-cmd count must grow by the number of unique events acked "
+        "(default). unchanged: it counts records in a bad state (an order paid twice, a cancelled "
+        "order that was paid) and must not grow. Scenarios such as late-failure, double-payment "
+        "and upi-timeout default to unchanged.",
     ),
     client_verify_url: Optional[str] = typer.Option(
         None,
@@ -261,14 +292,28 @@ def run(
     if client_verify_format not in ("json", "form"):
         console.print("[red]--client-verify-format must be json or form[/red]")
         raise typer.Exit(2)
+    if webhook_repeat < 1 or webhook_concurrency < 1:
+        console.print("[red]--webhook-repeat and --webhook-concurrency must be at least 1[/red]")
+        raise typer.Exit(2)
+    verify_spec = dict(scenario.verify or {})
+    expect = verify_expect.value if verify_expect else verify_spec.get("expect", EXPECT_ACKED)
+    if expect not in (EXPECT_ACKED, EXPECT_UNCHANGED):
+        console.print(f"[red]Scenario {scenario_name}: verify.expect must be acked or unchanged[/red]")
+        raise typer.Exit(2)
+    verify_spec["expect"] = expect
     try:
-        run_id, verification, deliveries = asyncio.run(_do_run(
+        stage_delay_s = max(0.0, float(plan.parameters.get("late_delay_s", 0) or 0))
+    except (TypeError, ValueError):
+        stage_delay_s = 0.0
+    try:
+        run_id, verification, deliveries, outlook = asyncio.run(_do_run(
             plan, scenario_name, provider, adapter, webhook_url, webhook_secret, callback_url,
             webhook_repeat=webhook_repeat, webhook_order=webhook_order, webhook_signature=webhook_signature,
             webhook_provider=webhook_provider, verify_cmd=verify_cmd, verify_event=verify_event,
             client_verify_url=client_verify_url,
             client_verify_secret=client_verify_secret or webhook_secret or "carbon",
             client_verify_format=client_verify_format,
+            webhook_concurrency=webhook_concurrency, verify_spec=verify_spec, stage_delay_s=stage_delay_s,
         ))
     except VerifyError as e:
         console.print(f"[red]{e}[/red]")
@@ -286,6 +331,8 @@ def run(
 
         def _count(pred) -> int:
             return sum(1 for d in deliveries if pred(d.get("status_code")))
+
+        gw_timeout = gateway_timeout_s(webhook_provider)
 
         result = {
             "carbon_version": __version__,
@@ -314,8 +361,13 @@ def run(
                 "status_4xx": _count(lambda sc: isinstance(sc, int) and 400 <= sc < 500),
                 "failed_5xx": _count(lambda sc: isinstance(sc, int) and sc >= 500),
                 "timeout": _count(lambda sc: sc is None),
+                "slow": sum(
+                    1 for d in deliveries
+                    if gw_timeout and d.get("ok") and (d.get("duration_ms") or 0) > gw_timeout * 1000
+                ),
             },
             "verification": verification,
+            "retry_outlook": outlook,
             "hints": hints,
             "passed": passed,
         }
@@ -323,6 +375,8 @@ def run(
     else:
         console.print(f"\n[green]Run completed: {run_id}[/green]")
         asyncio.run(print_report(run_id))
+        if outlook:
+            _print_outlook(outlook)
         if verification:
             _print_verification(verification)
     for hint in hints:
@@ -334,7 +388,10 @@ def run(
     if ci and not passed:
         reasons = [f["message"] for f in findings if f["severity"] != "info" and not f["passed"]]
         if verification and not verification["passed"]:
-            reasons.append("side-effect verification did not pass")
+            if verification.get("mode") == EXPECT_UNCHANGED:
+                reasons.append(f"state check: {verification['message']}")
+            else:
+                reasons.append("side-effect verification did not pass")
         for reason in reasons:
             console.print(f"[red]CI check failed: {reason}[/red]")
         raise typer.Exit(1)
@@ -357,12 +414,17 @@ async def _do_run(
     client_verify_url: Optional[str] = None,
     client_verify_secret: str = "carbon",
     client_verify_format: str = "json",
-) -> tuple[str, Optional[dict], list[dict]]:
+    webhook_concurrency: int = 1,
+    verify_spec: Optional[dict] = None,
+    stage_delay_s: float = 0.0,
+) -> tuple[str, Optional[dict], list[dict], Optional[dict]]:
     await ensure_db()
     # The run records the webhook format sent, not the (usually simulated) adapter
     run_id = await create_run(scenario_name, webhook_provider, plan.parameters)
     verification = None
+    outlook = None
     deliveries: list[dict] = []
+    verify_spec = verify_spec or {}
     try:
         await run_plan(plan, run_id, provider, adapter)
         if webhook_url:
@@ -390,12 +452,47 @@ async def _do_run(
                 repeat=webhook_repeat,
                 order=webhook_order,
                 signature_mode=webhook_signature,
+                burst=webhook_concurrency,
+                stage_delay_s=stage_delay_s,
+                timeout_s=client_timeout_s(webhook_provider),
             )
+            stages = sorted({d.get("stage", 1) for d in deliveries})
+            if len(stages) > 1:
+                late = sum(1 for d in deliveries if d.get("stage", 1) != stages[0])
+                console.print(
+                    f"[dim]Delivered in {len(stages)} batches, {stage_delay_s:g} s apart "
+                    f"({late} of {len(deliveries)} webhooks in a later batch)[/dim]"
+                )
+            if webhook_concurrency > 1:
+                console.print(
+                    f"[dim]Each webhook sent {webhook_concurrency} times at the same instant "
+                    f"({len(deliveries)} deliveries)[/dim]"
+                )
             if verify_cmd:
                 after = read_counter(verify_cmd)
-                verification = evaluate(before, after, deliveries, verify_event, client_calls=client_calls)
+                if verify_spec.get("expect") == EXPECT_UNCHANGED:
+                    verification = evaluate_unchanged(
+                        before, after, deliveries,
+                        counts=verify_spec.get("counts") or "records in a bad state",
+                        fix=verify_spec.get("fix"),
+                    )
+                else:
+                    verification = evaluate(
+                        before, after, deliveries, verify_event, client_calls=client_calls,
+                        burst=webhook_concurrency,
+                    )
             # Graded checks: how the handler responded
-            for f in evaluate_deliveries(deliveries, webhook_signature):
+            findings = evaluate_deliveries(
+                deliveries, webhook_signature,
+                timeout_s=gateway_timeout_s(webhook_provider),
+                gateway=_DISPLAY_NAME.get(webhook_provider, webhook_provider),
+            )
+            # What the gateway would do about the failures (only meaningful for valid signatures)
+            if webhook_signature == "valid" and not nothing_listening(deliveries):
+                outlook = project(deliveries, webhook_provider)
+                if outlook:
+                    findings.append(outlook_finding(outlook))
+            for f in findings:
                 await insert_finding(run_id, f["check"], f["severity"], f["passed"], f["message"], f["details"])
         await run_validations(run_id)
         if callback_url:
@@ -407,11 +504,29 @@ async def _do_run(
     except Exception as e:
         await update_run_status(run_id, "failed")
         raise e
-    return run_id, verification, deliveries
+    return run_id, verification, deliveries, outlook
+
+
+def _print_outlook(o: dict) -> None:
+    color = {"ok": "green", "recoverable": "yellow", "unknown": "dim"}.get(o["verdict"], "red")
+    label = {"ok": "OK", "recoverable": "RETRIES", "unknown": "N/A"}.get(o["verdict"], "WARNING")
+    console.print(f"\n[bold]Gateway retry outlook[/bold] ({o['gateway']})")
+    console.print(f"  [{color}]{label}[/{color}]: [{color}]{o['headline']}[/{color}]")
+    for line in o["details"]:
+        console.print(f"  {line}")
+    if o["source"] and o["verdict"] != "ok":
+        console.print(f"  [dim]Source: {o['source']}[/dim]")
 
 
 def _print_verification(v: dict) -> None:
     color = "green" if v["passed"] else "red"
+    if v.get("mode") == EXPECT_UNCHANGED:
+        console.print(f"\n[bold]State check[/bold]: {v['counts']} (must not grow)")
+        console.print(f"  deliveries sent: {v['deliveries']}   checker: {v['before']:g} -> {v['after']:g}")
+        console.print(f"  [{color}]{'PASS' if v['passed'] else 'FAIL'}[/{color}]: {v['message']}")
+        if v.get("fix"):
+            console.print(f"  Fix: {v['fix']}")
+        return
     label = {"pass": "PASS", "duplicates": "FAIL: duplicate processing", "lost": "FAIL: lost events"}[v["verdict"]]
     console.print(f"\n[bold]Side-effect verification[/bold] ({v['event_type']})")
     console.print(

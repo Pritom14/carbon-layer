@@ -447,6 +447,15 @@ def build_event_payload(
     )
 
 
+# Entity metadata key for carbon's own bookkeeping: {"stage": int, "followup_of": local_id}
+CARBON_META_KEY = "_carbon"
+
+
+def is_followup(info: dict) -> bool:
+    """True for an extra event about an existing payment (a late failure or late capture)."""
+    return bool(((info.get("metadata") or {}).get(CARBON_META_KEY) or {}).get("followup_of"))
+
+
 def build_events_from_entity_map(
     entity_map: dict,
     *,
@@ -462,13 +471,16 @@ def build_events_from_entity_map(
         if not event_type:
             continue
         remote_id = info.get("remote_id") or ""
-        metadata = info.get("metadata") or {}
+        metadata = dict(info.get("metadata") or {})
+        # Delivery hints from the executor (e.g. a late event's stage); never sent to the handler
+        carbon_meta = metadata.pop(CARBON_META_KEY, None) or {}
         events.append(
             {
                 "event_type": event_type,
                 "entity_type": entity_type,
                 "local_id": local_id,
                 "remote_id": remote_id,
+                "stage": int(carbon_meta.get("stage", 1)),
                 "payload": build_event_payload(
                     event_type=event_type,
                     entity_type=entity_type,
