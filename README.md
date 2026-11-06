@@ -232,6 +232,38 @@ Side-effect verification (payment.captured)
 
 The fix is a unique constraint on the effect (one credit per payment or event id) with `INSERT ... ON CONFLICT DO NOTHING`, so the database turns away the second copy however the requests interleave. A lock in application code only covers one process. `--webhook-concurrency` combines with `--webhook-repeat` (N copies at once, in each retry round).
 
+### A failed first delivery (`--fault-cmd`)
+
+The usual idempotency fix records the event id as processed and applies the credit. If those are two separate writes (the event table and the wallet in different databases, or two transactions), a failure between them is worse than a duplicate: the first attempt records the event and then fails, every retry sees "already processed" and returns 200, and the customer paid while the wallet never moved. A normal run never fails half way, so the bug stays hidden.
+
+`--fault-cmd` breaks the write your handler makes for the first delivery of every event, `--recover-cmd` undoes it, and then carbon retries what was not acknowledged, the way the gateway would (a 2xx is never retried). `--verify-cmd` then checks that every acknowledged event was applied exactly once:
+
+```bash
+carbon run flash-sale --provider razorpay \
+  --webhook-url http://localhost:8000/webhooks --webhook-secret $RAZORPAY_WEBHOOK_SECRET \
+  --fault-cmd "psql -c 'revoke insert on wallet_credits from app'" \
+  --recover-cmd "psql -c 'grant insert on wallet_credits to app'" \
+  --verify-cmd "psql -tAc 'select count(*) from wallet_credits'" --ci
+```
+
+Real run against a handler that keeps processed event ids in one SQLite database and credits in another:
+
+```
+Fault mode: 50 first deliveries with the write broken (0 returned 2xx), 50 retries after recovery
+Side-effect verification (payment.captured)
+  deliveries sent: 100   unique events acked: 50   counter: 0 -> 0 (change 0)
+  with the fault: 50 first deliveries (0 returned 2xx), counter 0 -> 0; retries after recovery took it to 0
+  FAIL: lost events: payment.captured: 50 unique events acknowledged (2xx) but only 0 side effects after a failed first delivery. The first delivery ran with the write broken and the handler marked the event processed before the write failed, so every retry was skipped. Record the event id and apply the effect in one database transaction, or reconcile missing effects by payment id
+```
+
+The same handler with the event id and the credit in one transaction passes: the first attempt fails cleanly (nothing recorded), and the retry credits once. Other things the run reports:
+
+- A handler that catches the failed write and returns 200 anyway fails too, with "the handler swallowed the error, so a gateway would never retry them".
+- If the counter rises while the fault is on, `--fault-cmd` did not break anything and the run fails with "the fault had no effect", so a broken fault never passes silently.
+- `--recover-cmd` always runs after the first delivery, even if `--fault-cmd` or a delivery failed. The failed first deliveries are not graded as 5xx failures and do not count towards the retry outlook.
+
+Any command that makes your write fail fast works: revoking INSERT, stopping the database that holds the credits (`docker stop` / `docker start`), or a feature flag your handler reads. `--webhook-repeat` sets the attempts (default 3 in fault mode: the first delivery and up to two retries). Raised by Karolis in a comment on the [dev.to post](https://dev.to/pritom14/does-your-razorpay-webhook-credit-the-same-payment-twice-50-second-demo-23na).
+
 ### Out-of-order delivery
 
 Gateways don't guarantee webhook order. Test with randomized or reversed delivery:

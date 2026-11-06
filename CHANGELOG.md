@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.0
+
+A failed first delivery: the idempotency fix that loses payments.
+
+### Added
+
+- **`--fault-cmd` and `--recover-cmd`.** `--fault-cmd` runs before the first delivery of every event and should break the write your handler makes (revoke INSERT on the credits table, stop the wallet database); `--recover-cmd` runs right after it. Carbon then retries only what was not acknowledged, as a gateway does, and `--verify-cmd` checks every acknowledged event was applied once. A handler that records the event id as processed and applies the credit in separate writes (two databases or two transactions) fails with "marked the event processed before the write failed, so every retry was skipped" and the fix (one transaction, or reconcile by payment id). A handler that answers 200 after a failed write fails with "swallowed the error". If the counter moves while the fault is on, the run fails with "the fault had no effect". `--recover-cmd` always runs, even when `--fault-cmd` or a delivery fails. Raised in a dev.to comment by Karolis.
+- JSON output: `verification.fault` (first deliveries, how many returned 2xx, the counter after recovery) and `webhooks.during_fault`.
+
+### Changed
+
+- Deliveries made while `--fault-cmd` is active are left out of the graded webhook checks, hints and the retry outlook: failing them is what the handler should do.
+
 ## 0.12.0
 
 Failure modes that return 200 and still lose money, and what the gateway does when your endpoint keeps failing.
