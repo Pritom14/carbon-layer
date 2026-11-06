@@ -9,7 +9,9 @@ import json
 import random
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime
+from typing import Optional
 
 import httpx
 
@@ -245,6 +247,8 @@ async def send_webhooks(
     signature_mode: str = "valid",
     burst: int = 1,
     stage_delay_s: float = 0.0,
+    fault_start: Optional[Callable[[], Awaitable[None]]] = None,
+    fault_end: Optional[Callable[[], Awaitable[None]]] = None,
 ) -> list[dict]:
     """
     Build provider-format webhooks from entity_map, POST them to target_url,
@@ -258,6 +262,10 @@ async def send_webhooks(
         burst: Send each webhook N times at the same instant (parallel duplicates).
         stage_delay_s: Pause between delivery stages. Scenarios put late events (a
             payment.failed after payment.captured, a late capture) in later stages.
+        fault_start, fault_end: Fault mode. fault_start runs before the first round and
+            fault_end after it (always, even on error); those deliveries are tagged
+            ``fault=True``. Every later round then behaves like a gateway's retries: it
+            resends only the events that have not had a 2xx yet.
     """
     conn = await get_connection()
     try:
@@ -276,6 +284,7 @@ async def send_webhooks(
             effective_secret = "wrong_secret_" + secret
 
         deliveries: list[dict] = []
+        acked: set[str] = set()
         stages = sorted({e.get("stage", 1) for e in events})
         limits = httpx.Limits(max_connections=max(100, 4 * burst), max_keepalive_connections=20)
         async with httpx.AsyncClient(limits=limits) as client:
@@ -284,15 +293,34 @@ async def send_webhooks(
                     await asyncio.sleep(stage_delay_s)
                 stage_events = [e for e in events if e.get("stage", 1) == stage]
                 for attempt in range(1, max(1, repeat) + 1):
+                    pending = stage_events
+                    if fault_start is not None and attempt > 1:
+                        # like a gateway: only what has not been acknowledged is retried
+                        pending = [e for e in stage_events if e["provider_event_id"] not in acked]
+                        if not pending:
+                            break
                     batch = [
                         {**e, "attempt": attempt} if repeat > 1 else e
-                        for e in _ordered(stage_events, order)
+                        for e in _ordered(pending, order)
                     ]
-                    deliveries += await _deliver_batch(
-                        client, batch, target_url=target_url, timeout_s=timeout_s,
-                        secret=effective_secret, provider=provider, signature_mode=signature_mode,
-                        concurrency=concurrency, burst=burst,
-                    )
+                    in_fault = fault_start is not None and i == 0 and attempt == 1
+                    try:
+                        if in_fault:
+                            await fault_start()
+                        got = await _deliver_batch(
+                            client, batch, target_url=target_url, timeout_s=timeout_s,
+                            secret=effective_secret, provider=provider, signature_mode=signature_mode,
+                            concurrency=concurrency, burst=burst,
+                        )
+                    finally:
+                        if in_fault and fault_end is not None:
+                            await fault_end()
+                    for d in got:
+                        if in_fault:
+                            d["fault"] = True
+                        if d.get("ok") and d.get("provider_event_id"):
+                            acked.add(d["provider_event_id"])
+                    deliveries += got
         await insert_webhook_deliveries_bulk(conn, run_id, target_url, deliveries)
         return deliveries
     finally:

@@ -30,6 +30,7 @@ from carbon.webhook.verify import (
     evaluate,
     evaluate_unchanged,
     read_counter,
+    run_hook,
 )
 
 app = typer.Typer(
@@ -206,6 +207,18 @@ def run(
     client_verify_format: str = typer.Option(
         "json", "--client-verify-format", help="Body format for client verify requests: json or form"
     ),
+    fault_cmd: Optional[str] = typer.Option(
+        None,
+        "--fault-cmd",
+        help="Shell command that breaks the write your handler makes (e.g. revoke INSERT on the "
+        "credits table, stop the wallet database). It runs before the first delivery and "
+        "--recover-cmd after it; then failed deliveries are retried, as a gateway would, and "
+        "--verify-cmd checks every acknowledged event was applied once. Catches handlers that "
+        "mark an event processed before the write fails.",
+    ),
+    recover_cmd: Optional[str] = typer.Option(
+        None, "--recover-cmd", help="Shell command that undoes --fault-cmd (always run after the first delivery)"
+    ),
 ) -> None:
     """Run a scenario and print report."""
     provider = provider.value
@@ -301,6 +314,25 @@ def run(
         console.print(f"[red]Scenario {scenario_name}: verify.expect must be acked or unchanged[/red]")
         raise typer.Exit(2)
     verify_spec["expect"] = expect
+    if fault_cmd or recover_cmd:
+        if not (fault_cmd and recover_cmd):
+            console.print("[red]--fault-cmd and --recover-cmd go together[/red]")
+            raise typer.Exit(2)
+        if not verify_cmd or expect != EXPECT_ACKED:
+            console.print(
+                "[red]--fault-cmd needs --verify-cmd counting the side effect (--verify-expect acked): "
+                "it checks every acknowledged event was applied once[/red]"
+            )
+            raise typer.Exit(2)
+        if webhook_signature != "valid":
+            console.print("[red]--fault-cmd needs --webhook-signature valid[/red]")
+            raise typer.Exit(2)
+        if webhook_repeat < 2:
+            webhook_repeat = 3  # the faulty first delivery, then up to two retries
+        err_console.print(
+            f"[dim]Fault mode: first delivery with --fault-cmd active, then --recover-cmd, then up to "
+            f"{webhook_repeat - 1} retries of what was not acknowledged[/dim]"
+        )
     try:
         stage_delay_s = max(0.0, float(plan.parameters.get("late_delay_s", 0) or 0))
     except (TypeError, ValueError):
@@ -314,6 +346,7 @@ def run(
             client_verify_secret=client_verify_secret or webhook_secret or "carbon",
             client_verify_format=client_verify_format,
             webhook_concurrency=webhook_concurrency, verify_spec=verify_spec, stage_delay_s=stage_delay_s,
+            fault_cmd=fault_cmd, recover_cmd=recover_cmd,
         ))
     except VerifyError as e:
         console.print(f"[red]{e}[/red]")
@@ -323,7 +356,8 @@ def run(
 
     findings = asyncio.run(get_findings(run_id))
     passed = overall_passed(findings, verification)
-    hints = delivery_hints(deliveries, webhook_signature, webhook_url or "")
+    # the deliberately broken first delivery is not graded or hinted about
+    hints = delivery_hints([d for d in deliveries if not d.get("fault")], webhook_signature, webhook_url or "")
 
     if output == "json":
         import json as _json
@@ -361,6 +395,7 @@ def run(
                 "status_4xx": _count(lambda sc: isinstance(sc, int) and 400 <= sc < 500),
                 "failed_5xx": _count(lambda sc: isinstance(sc, int) and sc >= 500),
                 "timeout": _count(lambda sc: sc is None),
+                "during_fault": sum(1 for d in deliveries if d.get("fault")),
                 "slow": sum(
                     1 for d in deliveries
                     if gw_timeout and d.get("ok") and (d.get("duration_ms") or 0) > gw_timeout * 1000
@@ -417,6 +452,8 @@ async def _do_run(
     webhook_concurrency: int = 1,
     verify_spec: Optional[dict] = None,
     stage_delay_s: float = 0.0,
+    fault_cmd: Optional[str] = None,
+    recover_cmd: Optional[str] = None,
 ) -> tuple[str, Optional[dict], list[dict], Optional[dict]]:
     await ensure_db()
     # The run records the webhook format sent, not the (usually simulated) adapter
@@ -444,6 +481,16 @@ async def _do_run(
                 )
                 ok = sum(1 for c in client_calls if c["ok"])
                 console.print(f"[dim]Client verify calls: {len(client_calls)} sent, {ok} returned 2xx[/dim]")
+            after_fault: list[float] = []
+
+            async def fault_start() -> None:
+                await asyncio.to_thread(run_hook, fault_cmd, "--fault-cmd")
+
+            async def fault_end() -> None:
+                # always runs, even when --fault-cmd or a delivery failed: never leave the fault on
+                await asyncio.to_thread(run_hook, recover_cmd, "--recover-cmd")
+                after_fault.append(await asyncio.to_thread(read_counter, verify_cmd))
+
             deliveries = await send_webhooks(
                 run_id,
                 target_url=webhook_url,
@@ -455,7 +502,16 @@ async def _do_run(
                 burst=webhook_concurrency,
                 stage_delay_s=stage_delay_s,
                 timeout_s=client_timeout_s(webhook_provider),
+                fault_start=fault_start if fault_cmd else None,
+                fault_end=fault_end if fault_cmd else None,
             )
+            if fault_cmd:
+                first = [d for d in deliveries if d.get("fault")]
+                console.print(
+                    f"[dim]Fault mode: {len(first)} first deliveries with the write broken "
+                    f"({sum(1 for d in first if d.get('ok'))} returned 2xx), "
+                    f"{len(deliveries) - len(first)} retries after recovery[/dim]"
+                )
             stages = sorted({d.get("stage", 1) for d in deliveries})
             if len(stages) > 1:
                 late = sum(1 for d in deliveries if d.get("stage", 1) != stages[0])
@@ -479,17 +535,19 @@ async def _do_run(
                 else:
                     verification = evaluate(
                         before, after, deliveries, verify_event, client_calls=client_calls,
-                        burst=webhook_concurrency,
+                        burst=webhook_concurrency, after_fault=after_fault[0] if after_fault else None,
                     )
-            # Graded checks: how the handler responded
+            # Graded checks: how the handler responded. Deliveries made while --fault-cmd had
+            # broken the handler on purpose are left out: failing them is the expected behaviour.
+            graded = [d for d in deliveries if not d.get("fault")]
             findings = evaluate_deliveries(
-                deliveries, webhook_signature,
+                graded, webhook_signature,
                 timeout_s=gateway_timeout_s(webhook_provider),
                 gateway=_DISPLAY_NAME.get(webhook_provider, webhook_provider),
             )
             # What the gateway would do about the failures (only meaningful for valid signatures)
             if webhook_signature == "valid" and not nothing_listening(deliveries):
-                outlook = project(deliveries, webhook_provider)
+                outlook = project(graded, webhook_provider)
                 if outlook:
                     findings.append(outlook_finding(outlook))
             for f in findings:
@@ -527,7 +585,12 @@ def _print_verification(v: dict) -> None:
         if v.get("fix"):
             console.print(f"  Fix: {v['fix']}")
         return
-    label = {"pass": "PASS", "duplicates": "FAIL: duplicate processing", "lost": "FAIL: lost events"}[v["verdict"]]
+    label = {
+        "pass": "PASS",
+        "duplicates": "FAIL: duplicate processing",
+        "lost": "FAIL: lost events",
+        "fault_ineffective": "FAIL: the fault had no effect",
+    }[v["verdict"]]
     console.print(f"\n[bold]Side-effect verification[/bold] ({v['event_type']})")
     console.print(
         f"  deliveries sent: {v['deliveries']}   "
@@ -535,6 +598,13 @@ def _print_verification(v: dict) -> None:
         + f"unique {'payments' if v.get('client_verify_calls') is not None else 'events'} acked: {v['unique_events_acked']}   "
         f"counter: {v['before']:g} -> {v['after']:g} (change {v['observed_change']:g})"
     )
+    if v.get("fault"):
+        f = v["fault"]
+        console.print(
+            f"  with the fault: {f['first_deliveries']} first deliveries ({f['first_deliveries_acked']} "
+            f"returned 2xx), counter {v['before']:g} -> {f['counter_after_fault']:g}; retries after recovery "
+            f"took it to {v['after']:g}"
+        )
     console.print(f"  [{color}]{label}[/{color}]: {v['message']}")
 
 
