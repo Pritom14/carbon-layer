@@ -18,13 +18,17 @@ from mcp_client import MCP
 TRANSIENT = (httpx.TransportError, httpx.HTTPStatusError)
 
 
-def place_once(mcp, address, method, cart_id):
+def place_once(mcp, address, method):
+    # cart_id can change between calls on the real server, so remember which orders already
+    # existed and treat a new one as ours. Still racy (another order in flight, or the order
+    # showing up after the wait); an idempotency key on place_food_order would close that.
+    before = {o["orderId"] for o in mcp.call("get_food_orders")["orders"]}
     try:
         return mcp.call("place_food_order", addressId=address, paymentMethod=method)
     except TRANSIENT:
         time.sleep(2)  # the guide: wait 2-5 s, then look before retrying
         for existing in mcp.call("get_food_orders")["orders"]:
-            if existing["cartId"] == cart_id and existing["status"] != "FAILED":
+            if existing["orderId"] not in before and existing["status"] != "FAILED":
                 print(f"order {existing['orderId']} went through after all")
                 return existing
         return mcp.call("place_food_order", addressId=address, paymentMethod=method)
@@ -44,7 +48,7 @@ mcp = MCP(os.environ["CARBON_MCP_URL"])
 address = mcp.call("get_addresses")["addresses"][0]["id"]
 cart = mcp.call("get_food_cart", addressId=address)
 method = cart["availablePaymentMethods"][0]
-order = place_once(mcp, address, method, cart["cart_id"])
+order = place_once(mcp, address, method)
 print(f"order {order['orderId']}: {order['status']}")
 if order["status"] == "PENDING_PAYMENT":
     interval = order.get("pollingIntervalInMs", 1000) / 1000
