@@ -348,6 +348,47 @@ If more than 90% of validly signed webhooks get 401/403, Carbon prints a hint th
 
 ---
 
+## AI agents that order and pay (`carbon agent`)
+
+An AI agent that places orders through MCP tools has the same problems as a webhook handler, from the other side. Its order call times out after the order was created; a generic retry places it again. A UPI payment succeeds, and the agent stops before `confirm_order`, so the customer paid and nothing was ordered.
+
+`carbon agent` runs a local test shop whose tools follow the payment flow in [Swiggy MCP's builder docs](https://mcp.swiggy.com/builders/docs/build/ship-to-production/) (`get_food_cart`, `place_food_order`, `check_payment_status`, `confirm_order`, `get_food_orders`, ...), so an agent written for it can be pointed here unchanged. Each scenario injects one fault, then carbon grades the agent from the shop's own ledger of orders and payments, not from what the agent says it did. Nothing touches a real store or real money. (carbon-layer is not affiliated with Swiggy.)
+
+```bash
+carbon agent all --agent-cmd "python my_agent.py"
+```
+
+Your agent gets `CARBON_MCP_URL` (an MCP server, Streamable HTTP) and `CARBON_AGENT_TASK` (what to ask an LLM agent to do), and should place one order.
+
+| Scenario | Fault | Fails when |
+|---|---|---|
+| `lost-order-response` | `place_food_order` creates the order, then the connection drops before the response | the agent places the cart again: 2 orders for one cart |
+| `unconfirmed-payment` | the UPI payment succeeds with `confirmed: false` | the agent never calls `confirm_order`: paid, order never placed |
+| `confirm-error` | the first `confirm_order` answers HTTP 502 | the agent gives up, or places a new order instead of retrying `confirm_order` (it is idempotent) |
+
+```
+carbon agent  lost-order-response
+place_food_order creates the order, then the response is lost.
+calls   get_addresses 1, get_food_cart 1, place_food_order 2
+orders  2  (CONFIRMED, CONFIRMED)
+
+FAIL  2 orders placed for one cart. The first place_food_order response was lost
+      after the order was created, and the agent placed it again without
+      checking get_food_orders.
+Fix   Never blind-retry place_food_order. After a lost or failed response, wait
+      2-5 s and call get_food_orders; retry only if the order is not there.
+```
+
+Warnings (they do not fail the run): polling `check_payment_status` faster than `pollingIntervalInMs`, and never checking `get_food_orders` after a lost response. Exit code 1 if any scenario fails or the agent places no order; `--output json` prints every tool call and order.
+
+To drive the shop from an MCP client yourself (Claude, Cursor, MCP Inspector), use `--serve`: carbon prints the URL (default port 8765) and the task, and grades the run when you press Enter.
+
+```bash
+carbon agent lost-order-response --serve
+```
+
+Two example agents are in [`examples/agents/`](examples/agents/): `retry_agent.py` retries every failed tool call and stops when the payment succeeds (it fails all three), and `careful_agent.py` follows Swiggy's ship-to-production guidance (it passes all three).
+
 ## Gateway retry outlook
 
 A handler that times out or errors doesn't just lose one event. The gateway retries it, then gives up, and some gateways switch the endpoint off, after which every later event goes undelivered until someone re-enables it. Every run with `--webhook-url` ends with a projection of what the gateway would do with the failures it saw:

@@ -741,6 +741,92 @@ def _print_scorecard(card: dict) -> None:
 
 
 @app.command()
+def agent(
+    scenario: Optional[str] = typer.Argument(
+        None, help="Scenario to run, or 'all'. Leave it out to list the scenarios."
+    ),
+    agent_cmd: Optional[str] = typer.Option(
+        None,
+        "--agent-cmd",
+        help="Shell command that runs your agent once. It gets CARBON_MCP_URL and CARBON_AGENT_TASK.",
+    ),
+    serve: bool = typer.Option(
+        False,
+        "--serve",
+        help="Serve the shop and wait while you drive an MCP client at it; press Enter when done",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="Interface for the shop"),
+    port: int = typer.Option(0, "--port", help="Port for the shop (default: any free port; 8765 with --serve)"),
+    timeout: float = typer.Option(120.0, "--timeout", help="Seconds the agent may run"),
+    output: OutputFormat = typer.Option(OutputFormat.terminal, "--output", help="Output format"),
+) -> None:
+    """Test an AI agent that orders and pays through MCP tools (lost responses, unconfirmed UPI payments)."""
+    from carbon.agent import SCENARIOS, run_scenario
+    from carbon.agent.report import print_result, print_summary
+
+    console.stderr = output == OutputFormat.json
+    if scenario is None:
+        from rich.table import Table
+
+        console.print("[bold]carbon agent scenarios[/bold] (a test shop shaped like Swiggy MCP's Food tools)")
+        grid = Table.grid(padding=(0, 2))
+        grid.add_column(style="cyan", no_wrap=True)
+        grid.add_column()
+        for s in SCENARIOS.values():
+            grid.add_row(s.name, s.summary)
+        console.print(grid)
+        console.print("\nRun them: carbon agent all --agent-cmd \"python my_agent.py\"")
+        return
+    names = list(SCENARIOS) if scenario == "all" else [scenario]
+    unknown = [n for n in names if n not in SCENARIOS]
+    if unknown:
+        console.print(f"[red]Unknown scenario {unknown[0]!r}. Choose from: {', '.join(SCENARIOS)}, all[/red]")
+        raise typer.Exit(2)
+    if bool(agent_cmd) == serve:
+        console.print("[red]Pass --agent-cmd to run your agent, or --serve to drive one yourself.[/red]")
+        raise typer.Exit(2)
+    if serve and len(names) > 1:
+        console.print("[red]--serve runs one scenario at a time.[/red]")
+        raise typer.Exit(2)
+    if serve and port == 0:
+        port = 8765
+
+    def wait(url: str, task: str) -> None:
+        console.print(f"Test shop for [cyan]{names[0]}[/cyan]: [bold]{url}[/bold] (MCP, Streamable HTTP)")
+        console.print(f"Ask your agent: {task}")
+        console.print("Press Enter when the agent is done.")
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            pass
+
+    results = []
+    for i, name in enumerate(names):
+        result = run_scenario(
+            name, agent_cmd=agent_cmd, serve=serve, host=host, port=port, timeout_s=timeout, wait=wait
+        )
+        results.append(result)
+        if output == OutputFormat.terminal:
+            if i:
+                console.print()
+            print_result(console, result)
+    failed = [r for r in results if r["status"] != "pass"]
+    if output == OutputFormat.json:
+        import json as _json
+
+        print(_json.dumps({
+            "carbon_version": __version__,
+            "status": "fail" if failed else "pass",
+            "results": results,
+        }, indent=2, ensure_ascii=False))
+    elif len(results) > 1:
+        console.print()
+        print_summary(console, results)
+    if failed:
+        raise typer.Exit(1)
+
+
+@app.command()
 def report(
     run_id: Optional[str] = typer.Argument(None, help="Run ID from a previous run"),
     run_id_opt: Optional[str] = typer.Option(None, "--run-id", help="Same as the RUN_ID argument"),
