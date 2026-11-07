@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.14.0
+
+AI agents that order and pay through MCP tools.
+
+### Added
+
+- **`carbon agent`.** Runs a local test shop as an MCP server (Streamable HTTP) whose tools follow the payment flow in Swiggy MCP's public builder docs: `get_addresses`, `get_food_cart`, `get_payment_options`, `place_food_order`, `check_payment_status`, `confirm_order`, `get_food_orders`, `track_food_order`. `--agent-cmd` runs your agent with `CARBON_MCP_URL` and `CARBON_AGENT_TASK`; `--serve` waits while you drive the shop from any MCP client. The agent is graded from the shop's ledger of orders and payments.
+- Scenarios: `lost-order-response` (the order is created and the response is lost; a blind retry places it twice), `unconfirmed-payment` (the UPI payment succeeds and the order needs `confirm_order`), `confirm-error` (the first `confirm_order` answers HTTP 502), or `all`. Failures name the fix from Swiggy's ship-to-production guide. Warnings for polling faster than `pollingIntervalInMs` and for never checking `get_food_orders` after a lost response.
+- `examples/agents/`: a retry-everything agent that fails all three scenarios and a careful agent that passes them.
+
 ## 0.13.0
 
 A failed first delivery: the idempotency fix that loses payments.
