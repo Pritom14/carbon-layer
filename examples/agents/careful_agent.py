@@ -19,9 +19,9 @@ TRANSIENT = (httpx.TransportError, httpx.HTTPStatusError)
 
 
 def place_once(mcp, address, method):
-    # cart_id can change between calls on the real server, so remember which orders already
-    # existed and treat a new one as ours. Still racy (another order in flight, or the order
-    # showing up after the wait); an idempotency key on place_food_order would close that.
+    # An order in get_food_orders does not say which place_food_order call made it, so remember
+    # which orders already existed and treat a new one as ours. Still racy (another order in
+    # flight, or the order showing up after the wait); an idempotency key would close that.
     before = {o["orderId"] for o in mcp.call("get_food_orders")["orders"]}
     try:
         return mcp.call("place_food_order", addressId=address, paymentMethod=method)

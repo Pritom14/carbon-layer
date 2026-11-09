@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `carbon agent`: the duplicate-order fix now also says to turn off transport and framework retries for `place_food_order`, as Swiggy's team asked on [swiggy-mcp-server-manifest#156](https://github.com/Swiggy/swiggy-mcp-server-manifest/issues/156).
+- `examples/agents/careful_agent.py`: corrected a comment. `cart_id` does not change between reads (Swiggy's team clarified it stays the same until an order is placed from the cart); the agent snapshots `get_food_orders` because an order does not record which call created it.
+
 ## 0.14.0
 
 AI agents that order and pay through MCP tools.
