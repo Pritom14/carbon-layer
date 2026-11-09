@@ -375,9 +375,12 @@ orders  2  (CONFIRMED, CONFIRMED)
 FAIL  2 orders placed for one cart. The first place_food_order response was lost
       after the order was created, and the agent placed it again without
       checking get_food_orders.
-Fix   Never blind-retry place_food_order. After a lost or failed response, wait
-      2-5 s and call get_food_orders; retry only if the order is not there.
+Fix   Never blind-retry place_food_order, and turn off transport and framework
+      retries for it. After a lost or failed response, wait 2-5 s and call
+      get_food_orders; retry only if the order is not there.
 ```
+
+Swiggy's team confirmed in [swiggy-mcp-server-manifest#156](https://github.com/Swiggy/swiggy-mcp-server-manifest/issues/156) that the server does not de-duplicate a retried `place_food_order` today, and asks builders to turn off transport and framework retries for the order tools. They are also updating their errors page so order placement points to the check-then-retry pattern instead of the generic 5xx retry.
 
 Warnings (they do not fail the run): polling `check_payment_status` faster than `pollingIntervalInMs`, and never checking `get_food_orders` after a lost response. Exit code 1 if any scenario fails or the agent places no order; `--output json` prints every tool call and order.
 

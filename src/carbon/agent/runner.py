@@ -14,8 +14,8 @@ from carbon.agent.shop import PAY_WITH_UPI, SCENARIOS, SHIP_TO_PRODUCTION, TO_PA
 _CHECK_TOOLS = ("get_food_orders", "track_food_order")
 
 FIX_DUPLICATE = (
-    "Never blind-retry place_food_order. After a lost or failed response, wait 2-5 s and call "
-    "get_food_orders; retry only if the order is not there."
+    "Never blind-retry place_food_order, and turn off transport and framework retries for it. After a "
+    "lost or failed response, wait 2-5 s and call get_food_orders; retry only if the order is not there."
 )
 FIX_CONFIRM = (
     "When check_payment_status reports success and confirmed is not true, call confirm_order, "
